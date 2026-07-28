@@ -129,4 +129,22 @@ var catalogVI = map[string]string{
 	"config.msg_saved_switch_hint": "; dùng /model để chuyển",
 	"config.err_ctx_format":        "Cửa sổ ngữ cảnh phải là số nguyên dương, 128K, 1M, hoặc để trống dùng tự động",
 	"config.err_ctx_range":         "Cửa sổ ngữ cảnh vượt phạm vi số nguyên hợp lệ",
+
+	// command_model.go — panel /model
+	"model.title":           "/model Đổi model",
+	"model.field_role":      "Vai trò",
+	"model.field_model":     "Model",
+	"model.field_thinking":  "Mức suy luận",
+	"model.hint":            "Tab đổi trường   ←→ đổi lựa chọn   Enter áp dụng   Esc huỷ",
+	"model.unset":           "chưa đặt",
+	"model.msg_no_provider": "Hiện không có provider khả dụng",
+	"model.err_no_models":   "provider %q chưa cấu hình model nào",
+	"model.role_default":    "Mặc định",
+	"model.think_inherit":   "Mặc định (kế thừa)",
+	"model.think_off":       "Tắt",
+	"model.think_low":       "Thấp",
+	"model.think_medium":    "Vừa",
+	"model.think_high":      "Cao",
+	"model.think_xhigh":     "Rất cao",
+	"model.think_max":       "Tối đa",
 }

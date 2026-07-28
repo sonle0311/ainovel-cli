@@ -129,4 +129,22 @@ var catalogEN = map[string]string{
 	"config.msg_saved_switch_hint": "; use /model to switch",
 	"config.err_ctx_format":        "Context window must be a positive integer, 128K, 1M, or empty for auto",
 	"config.err_ctx_range":         "Context window is out of valid integer range",
+
+	// command_model.go — /model panel
+	"model.title":           "/model Switch Model",
+	"model.field_role":      "Role",
+	"model.field_model":     "Model",
+	"model.field_thinking":  "Reasoning",
+	"model.hint":            "Tab field   ←→ option   Enter apply   Esc cancel",
+	"model.unset":           "not set",
+	"model.msg_no_provider": "No provider available",
+	"model.err_no_models":   "provider %q has no configured models",
+	"model.role_default":    "Default",
+	"model.think_inherit":   "Default (inherit)",
+	"model.think_off":       "Off",
+	"model.think_low":       "Low",
+	"model.think_medium":    "Medium",
+	"model.think_high":      "High",
+	"model.think_xhigh":     "X-High",
+	"model.think_max":       "Max",
 }

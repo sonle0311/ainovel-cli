@@ -129,4 +129,22 @@ var catalogZH = map[string]string{
 	"config.msg_saved_switch_hint": "；使用 /model 切换",
 	"config.err_ctx_format":        "上下文窗口请输入正整数、128K、1M，或留空使用自动值",
 	"config.err_ctx_range":         "上下文窗口超出有效整数范围",
+
+	// command_model.go — /model 面板
+	"model.title":           "/model 切换模型",
+	"model.field_role":      "角色",
+	"model.field_model":     "模型",
+	"model.field_thinking":  "推理强度",
+	"model.hint":            "Tab 切字段   ←→ 切选项   Enter 应用   Esc 取消",
+	"model.unset":           "未设置",
+	"model.msg_no_provider": "当前没有可用 provider",
+	"model.err_no_models":   "provider %q 没有已配置模型",
+	"model.role_default":    "默认",
+	"model.think_inherit":   "默认(继承)",
+	"model.think_off":       "关闭",
+	"model.think_low":       "低",
+	"model.think_medium":    "中",
+	"model.think_high":      "高",
+	"model.think_xhigh":     "极高",
+	"model.think_max":       "最高",
 }
