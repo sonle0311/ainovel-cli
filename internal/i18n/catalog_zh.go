@@ -11,4 +11,11 @@ var catalogZH = map[string]string{
 	"help.hint_close":     "Esc 关闭当前命令面板",
 	"help.hint_copy_mode": "Ctrl+R 切换选中复制模式（关闭鼠标上报后可拖拽选中复制，再按一次恢复）",
 	"help.modal_footer":   "  ↑↓ 滚动 · Esc 关闭",
+
+	// commands.go — /lang 界面语言切换
+	"lang.description": "切换界面语言（zh/en/vi）",
+	"lang.current":     "当前界面语言：%s（支持 zh/en/vi，用法：/lang <语言>）",
+	"lang.switched":    "界面语言已切换：%s",
+	"lang.unsupported": "不支持的语言 %q（支持 zh/en/vi）",
+	"lang.save_failed": "语言已切换但写入配置失败：%v",
 }

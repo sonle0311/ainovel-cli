@@ -11,4 +11,11 @@ var catalogVI = map[string]string{
 	"help.hint_close":     "Esc đóng bảng lệnh hiện tại",
 	"help.hint_copy_mode": "Ctrl+R bật/tắt chế độ chọn-sao chép (tắt mouse reporting để kéo chọn văn bản; nhấn lần nữa để khôi phục)",
 	"help.modal_footer":   "  ↑↓ cuộn · Esc đóng",
+
+	// commands.go — /lang đổi ngôn ngữ giao diện
+	"lang.description": "Đổi ngôn ngữ giao diện (zh/en/vi)",
+	"lang.current":     "Ngôn ngữ giao diện hiện tại: %s (hỗ trợ zh/en/vi, cách dùng: /lang <ngôn ngữ>)",
+	"lang.switched":    "Đã đổi ngôn ngữ giao diện: %s",
+	"lang.unsupported": "Ngôn ngữ %q không được hỗ trợ (hỗ trợ zh/en/vi)",
+	"lang.save_failed": "Đã đổi ngôn ngữ nhưng lưu config thất bại: %v",
 }

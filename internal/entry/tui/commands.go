@@ -1,12 +1,14 @@
 package tui
 
 import (
+	"fmt"
 	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/voocel/ainovel-cli/internal/domain"
 	"github.com/voocel/ainovel-cli/internal/host"
+	"github.com/voocel/ainovel-cli/internal/i18n"
 )
 
 type slashCommandSpec struct {
@@ -84,6 +86,32 @@ func commandRegistryInstance() commandRegistry {
 				}
 				m.modelSwitch = newModelSwitchState(m.runtime, roleHint)
 				m.textarea.Blur()
+				return m, nil
+			},
+		},
+		{
+			Name:        "lang",
+			Group:       "system",
+			Usage:       "/lang [zh|en|vi]",
+			Description: i18n.T("lang.description"),
+			AutoExecute: true,
+			Run: func(m Model, args []string) (tea.Model, tea.Cmd) {
+				if len(args) == 0 {
+					m.applyEvent(host.Event{
+						Time: time.Now(), Category: "SYSTEM",
+						Summary: fmt.Sprintf(i18n.T("lang.current"), i18n.Current()), Level: "info",
+					})
+					m.refreshEventViewport()
+					return m, nil
+				}
+				if err := m.runtime.SwitchUILanguage(args[0]); err != nil {
+					m.applyEvent(host.Event{
+						Time: time.Now(), Category: "ERROR", Summary: err.Error(), Level: "error",
+					})
+					m.refreshEventViewport()
+					return m, nil
+				}
+				// 成功事件由 Host 发出（经事件通道回流），此处无需重复
 				return m, nil
 			},
 		},

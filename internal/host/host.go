@@ -23,6 +23,7 @@ import (
 	"github.com/voocel/ainovel-cli/internal/host/exp"
 	"github.com/voocel/ainovel-cli/internal/host/imp"
 	"github.com/voocel/ainovel-cli/internal/host/sim"
+	"github.com/voocel/ainovel-cli/internal/i18n"
 	modelreg "github.com/voocel/ainovel-cli/internal/models"
 	"github.com/voocel/ainovel-cli/internal/notify"
 	"github.com/voocel/ainovel-cli/internal/rules"
@@ -1327,6 +1328,31 @@ func (h *Host) SwitchModel(role, provider, model string) error {
 		Summary:  fmt.Sprintf("模型已切换：%s → %s/%s", role, provider, model),
 		Level:    "info",
 	})
+	return nil
+}
+
+// SwitchUILanguage 切换界面语言并写回当前生效配置（与 SwitchModel 同一写盘策略）。
+// 立即生效——命令面板与帮助文案在下次渲染即为新语言。写盘失败不回滚语言，
+// 只降级为警告事件（下次启动回到旧语言，用户可重试）。
+func (h *Host) SwitchUILanguage(raw string) error {
+	lang, ok := i18n.Normalize(raw)
+	if !ok {
+		return fmt.Errorf(i18n.T("lang.unsupported"), raw)
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	i18n.Set(string(lang))
+	h.cfg.UILanguage = string(lang)
+	summary := fmt.Sprintf(i18n.T("lang.switched"), lang)
+	level := "info"
+	if h.configPath != "" {
+		if err := bootstrap.SaveConfig(h.configPath, h.cfg); err != nil {
+			slog.Warn("保存配置失败", "module", "host", "err", err)
+			summary = fmt.Sprintf(i18n.T("lang.save_failed"), err)
+			level = "warn"
+		}
+	}
+	h.emitEvent(Event{Time: time.Now(), Category: "SYSTEM", Summary: summary, Level: level})
 	return nil
 }
 
