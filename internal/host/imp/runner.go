@@ -11,6 +11,7 @@ import (
 
 	"github.com/voocel/agentcore"
 	"github.com/voocel/ainovel-cli/internal/domain"
+	"github.com/voocel/ainovel-cli/internal/i18n"
 	"github.com/voocel/ainovel-cli/internal/logger"
 	"github.com/voocel/ainovel-cli/internal/store"
 )
@@ -175,7 +176,7 @@ func Run(ctx context.Context, deps Deps, opts Options) (<-chan Event, error) {
 		defer closeLog()
 		r := &runner{deps: deps, opts: opts, events: events, ws: OpenWorkspace(deps.Store.Dir()), log: log}
 		if logErr != nil {
-			r.emit(StageIngesting, 0, 0, fmt.Sprintf("导入日志文件创建失败（%v），本次转录改走默认日志", logErr), nil)
+			r.emit(StageIngesting, 0, 0, fmt.Sprintf(i18n.T("imp.msg.log_create_fail"), logErr), nil)
 		}
 		r.run(ctx)
 	}()
@@ -407,7 +408,7 @@ func (r *runner) ingest(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	r.emit(StageIngesting, 0, 0, fmt.Sprintf("源快照就绪：%s（编码 %s，%d 字节）", m.SourceName, m.Encoding, m.SizeBytes), nil)
+	r.emit(StageIngesting, 0, 0, fmt.Sprintf(i18n.T("imp.msg.source_ready"), m.SourceName, m.Encoding, m.SizeBytes), nil)
 	return nil
 }
 
@@ -419,9 +420,9 @@ func (r *runner) segment(ctx context.Context) error {
 	units := buildSourceUnits(src, r.deps.Budgets.MaxUnitBytes)
 	guidance, err := r.ws.LoadGuidance()
 	if err != nil {
-		return fmt.Errorf("读取切分指导: %w", err)
+		return fmt.Errorf(i18n.T("imp.err.read_guidance"), err)
 	}
-	r.emit(StageSegmenting, 0, 0, fmt.Sprintf("语义识别章节边界（%d 个坐标单元）...", len(units)), nil)
+	r.emit(StageSegmenting, 0, 0, fmt.Sprintf(i18n.T("imp.msg.segmenting"), len(units)), nil)
 	digest := segmentInputDigest(Digest(src), guidance, segmentPromptVersion)
 	// 块缓存身份额外绑定 MaxUnitBytes：unit 表由（归一化源, MaxUnitBytes）唯一确定，换模型
 	// 档位改变 MaxUnitBytes 会重塑超长行的虚拟分片——ID 序列（L1.1…）与块端点可复现但字节
@@ -438,10 +439,10 @@ func (r *runner) segment(ctx context.Context) error {
 	}
 	// 最终切分已落盘，块级缓存完成使命；清理失败无碍正确性（digest 仍一致），但要留痕。
 	if cerr := r.ws.clearDir(dirSegmentChunks); cerr != nil {
-		r.emit(StageSegmenting, 0, 0, fmt.Sprintf("块级缓存清理失败（不影响切分结果）：%v", cerr), nil)
+		r.emit(StageSegmenting, 0, 0, fmt.Sprintf(i18n.T("imp.msg.cache_clear_fail"), cerr), nil)
 	}
 	r.emit(StageSegmenting, len(seg.Chapters), len(seg.Chapters),
-		fmt.Sprintf("切分完成：%d 章、%d 个附属区域", len(seg.Chapters), len(seg.Matter)), nil)
+		fmt.Sprintf(i18n.T("imp.msg.segment_done"), len(seg.Chapters), len(seg.Matter)), nil)
 	return nil
 }
 
@@ -551,7 +552,7 @@ func (r *runner) analyze(ctx context.Context) error {
 		if start >= total {
 			break
 		}
-		r.emit(StageAnalyzing, start, total, fmt.Sprintf("分析第 %d 章起的连续批次...", start+1), nil)
+		r.emit(StageAnalyzing, start, total, fmt.Sprintf(i18n.T("imp.msg.analyzing"), start+1), nil)
 		done, err := AnalyzeNext(ctx, r.deps.Analyze.Model, r.deps.Prompts.Analyze, r.ws, src, seg, segArt.InputDigest, analyzePromptVersion, r.deps.Budgets.Analyze, r.profileFor(r.deps.Analyze, StageAnalyzing))
 		if err != nil {
 			return err
@@ -583,7 +584,7 @@ func (r *runner) synthesize(ctx context.Context) error {
 	if err := writeArtifact(r.ws, fileSynthesis, synthesisInputDigest(facts), *syn); err != nil {
 		return err
 	}
-	r.emit(StageSynthesizing, total, total, fmt.Sprintf("综合完成：%d 卷、故事状态 %s", len(syn.Structure), syn.StoryStatus), nil)
+	r.emit(StageSynthesizing, total, total, fmt.Sprintf(i18n.T("imp.msg.synth_done"), len(syn.Structure), syn.StoryStatus), nil)
 	return nil
 }
 
@@ -635,7 +636,7 @@ func (r *runner) publish(ctx context.Context) error {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		r.emit(StagePublishing, c.Number, total, fmt.Sprintf("发布第 %d/%d 章：%s", c.Number, total, c.Title), nil)
+		r.emit(StagePublishing, c.Number, total, fmt.Sprintf(i18n.T("imp.msg.publish"), c.Number, total, c.Title), nil)
 		if err := publishChapter(ctx, r.deps.Store, r.deps.CommitChapter, c.Number, seg.Content(src, i), facts[i]); err != nil {
 			return err
 		}

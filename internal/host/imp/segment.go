@@ -8,6 +8,8 @@ import (
 	"sort"
 	"strings"
 	"unicode"
+
+	"github.com/voocel/ainovel-cli/internal/i18n"
 )
 
 // BoundaryDecision 是模型对单个 owned range 的边界判断（RFC §8.2）。
@@ -109,7 +111,7 @@ func resolveSegmentation(normalized []byte, units []SourceUnit, decisions []Boun
 			// 完全相同的重复是机械冗余，静默去重；同位语义冲突（kind/标题不同）在调用期
 			// 已重问，走到这里只可能来自修复前的旧缓存——保留先出现者并记 Notes 人工核对。
 			if prev := uniq[n-1].d; prev.Kind != p.d.Kind || boundaryLabel(prev) != boundaryLabel(p.d) {
-				notes = append(notes, fmt.Sprintf("边界 %q 与 %q 重合（byte %d），已保留前者",
+				notes = append(notes, fmt.Sprintf(i18n.T("imp.note.boundary_overlap"),
 					boundaryLabel(prev), boundaryLabel(p.d), p.byte))
 			}
 			continue
@@ -122,7 +124,7 @@ func resolveSegmentation(normalized []byte, units []SourceUnit, decisions []Boun
 	// 终局否决会让重跑零调用复现同一失败（与空正文章节吸收同哲学，RFC §8.3.5）。
 	// 语义判断本身在调用期已交还模型（chunkValidator.coverStart 重问），此兜底只治愈旧缓存。
 	if head := points[0].byte; head != 0 && strings.TrimSpace(string(normalized[:head])) != "" {
-		notes = append(notes, fmt.Sprintf("起始 %d 字节文本未被模型归属（%s…），已收为 front_matter，请核对是否漏切章节",
+		notes = append(notes, fmt.Sprintf(i18n.T("imp.note.front_matter"),
 			head, snippet(string(normalized[:min(head, 48)]), 24)))
 		points = append([]point{{byte: 0, d: BoundaryDecision{UnitID: units[0].ID, Kind: kindFrontMatter}}}, points...)
 	}
@@ -162,7 +164,7 @@ func resolveSegmentation(normalized []byte, units []SourceUnit, decisions []Boun
 				// 终局一票否决会浪费切分阶段的全部模型调用；标题行并入前段（文本一字不丢），
 				// 记入 Notes 由确认预览呈现，人工不认可可用 --guide 裁定（RFC §8.4 的停点正为此存在）。
 				seg.Notes = append(seg.Notes,
-					fmt.Sprintf("章节标题 %q 无正文（byte %d..%d），已并入前段（常见于锁定/付费占位章节）", title, start, end))
+					fmt.Sprintf(i18n.T("imp.note.empty_chapter"), title, start, end))
 				if !absorb(end) {
 					seg.Matter = append(seg.Matter, MatterSpan{Kind: kindFrontMatter, Title: title, Start: start, End: end})
 				}
@@ -186,7 +188,7 @@ func resolveSegmentation(normalized []byte, units []SourceUnit, decisions []Boun
 	for _, c := range seg.Chapters {
 		key := squashSpace(c.Title)
 		if first, ok := titleAt[key]; ok && key != "" {
-			seg.Notes = append(seg.Notes, fmt.Sprintf("第 %d 章与第 %d 章标题相同（%q），疑似同章被误切，请核对",
+			seg.Notes = append(seg.Notes, fmt.Sprintf(i18n.T("imp.note.dup_title"),
 				c.Number, first, snippet(c.Title, 24)))
 		} else {
 			titleAt[key] = c.Number
@@ -408,14 +410,14 @@ func Segment(ctx context.Context, m callModel, systemPrompt string, normalized [
 		// 确定性复现同一失败。清缓存换取下次重新切分的模型机会；决策快照经 errSemantic
 		// 统一落 failures/ 供事后排查。清除失败必须如实报告——谎称已清除会让用户重跑
 		// 时再次复读坏缓存（Debug-First）。
-		hint := "块缓存已清除，重跑将重新切分"
+		hint := i18n.T("imp.note.cache_cleared")
 		if w != nil {
 			if cerr := w.clearDir(dirSegmentChunks); cerr != nil {
-				hint = fmt.Sprintf("块缓存清除失败：%v，重跑前请手动删除 meta/import/segment-chunks/", cerr)
+				hint = fmt.Sprintf(i18n.T("imp.note.cache_clear_fail_run"), cerr)
 			}
 		}
 		raw, _ := json.MarshalIndent(decisions, "", "  ")
-		return nil, &errSemantic{Raw: string(raw), Err: fmt.Errorf("整合全书切分失败（%s）：%w", hint, err)}
+		return nil, &errSemantic{Raw: string(raw), Err: fmt.Errorf(i18n.T("imp.err.integrate_fail"), hint, err)}
 	}
 	return seg, nil
 }
@@ -451,7 +453,7 @@ func previewBoundaries(bs []BoundaryDecision) string {
 	}
 	s := strings.Join(titles, " / ")
 	if len(bs) > len(titles) {
-		s += fmt.Sprintf("（共 %d 处）", len(bs))
+		s += fmt.Sprintf(i18n.T("imp.note.count_suffix"), len(bs))
 	}
 	return s
 }

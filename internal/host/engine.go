@@ -17,6 +17,7 @@ import (
 	"github.com/voocel/ainovel-cli/internal/domain"
 	"github.com/voocel/ainovel-cli/internal/errs"
 	"github.com/voocel/ainovel-cli/internal/flow"
+	"github.com/voocel/ainovel-cli/internal/i18n"
 	"github.com/voocel/ainovel-cli/internal/notify"
 	storepkg "github.com/voocel/ainovel-cli/internal/store"
 	"github.com/voocel/ainovel-cli/internal/tools"
@@ -162,13 +163,13 @@ func (e *engine) run(ctx context.Context) {
 					}
 				}
 				e.emitEvent(Event{Time: time.Now(), Category: "SYSTEM", Level: "warn",
-					Summary: "引擎已停,裁定派单未执行;干预已保留,继续创作时自动重新裁定"})
+					Summary: i18n.T("engine.event.stopped_pending")})
 				op.dispatch = nil
 			}
 			if op.hold != nil || op.reopen != nil {
 				if err := e.applyControlOp(context.Background(), op); err != nil {
 					e.emitEvent(Event{Time: time.Now(), Category: "ERROR", Level: "error",
-						Summary: "引擎退出时补提干预失败: " + err.Error()})
+						Summary: fmt.Sprintf(i18n.T("engine.event.steer_late_err"), err.Error())})
 				}
 			}
 		}
@@ -192,7 +193,7 @@ func (e *engine) run(ctx context.Context) {
 		if inst == nil {
 			state, err := flow.LoadState(e.store)
 			if err != nil {
-				e.pauseWithNotify(notify.KindWorkerFailure, "路由事实读取失败，已暂停: "+err.Error())
+				e.pauseWithNotify(notify.KindWorkerFailure, fmt.Sprintf(i18n.T("engine.pause.route_facts"), err.Error()))
 				return
 			}
 			inst = flow.Route(state)
@@ -201,7 +202,7 @@ func (e *engine) run(ctx context.Context) {
 			var err error
 			inst, err = e.planStartFallback(ctx)
 			if err != nil {
-				e.pauseWithNotify(notify.KindPlanStart, "规划恢复事实读取失败，已暂停: "+err.Error())
+				e.pauseWithNotify(notify.KindPlanStart, fmt.Sprintf(i18n.T("engine.pause.plan_facts"), err.Error()))
 				return
 			}
 		}
@@ -212,7 +213,7 @@ func (e *engine) run(ctx context.Context) {
 		}
 		replaced, err := e.precheck(inst)
 		if err != nil {
-			e.pauseWithNotify(notify.KindWorkerFailure, "派单前置校验失败，已暂停: "+err.Error())
+			e.pauseWithNotify(notify.KindWorkerFailure, fmt.Sprintf(i18n.T("engine.pause.dispatch_check"), err.Error()))
 			return
 		}
 		if replaced != nil {
@@ -220,7 +221,7 @@ func (e *engine) run(ctx context.Context) {
 		}
 		allowed, gateErr := e.gate.Allow(inst)
 		if gateErr != nil {
-			e.pauseWithNotify(notify.KindAdvanceGate, "章节推进控制错误，已暂停: "+gateErr.Error())
+			e.pauseWithNotify(notify.KindAdvanceGate, fmt.Sprintf(i18n.T("engine.pause.advance_gate"), gateErr.Error()))
 			return
 		}
 		if !allowed {
@@ -332,17 +333,17 @@ func (e *engine) retryPlanStart(ctx context.Context, prompt string) *flow.Instru
 		slog.Warn("启动补裁审计落盘失败", "module", "engine", "err", recErr)
 	}
 	if derr != nil {
-		e.pauseWithNotify(notify.KindPlanStart, "启动裁定失败,已暂停(请检查模型/网络配置后继续): "+truncate(derr.Error(), 200))
+		e.pauseWithNotify(notify.KindPlanStart, fmt.Sprintf(i18n.T("engine.pause.plan_start_fail"), truncate(derr.Error(), 200)))
 		return nil
 	}
 	if err := e.store.RunMeta.SetPlanStart(domain.PlanStartRecord{
 		RawPrompt: prompt, Planner: decision.Planner, PlannerTask: decision.Task, DecisionID: rec.ID,
 	}); err != nil {
-		e.pauseWithNotify(notify.KindPlanStart, "启动裁定无法落盘,已暂停: "+err.Error())
+		e.pauseWithNotify(notify.KindPlanStart, fmt.Sprintf(i18n.T("engine.pause.plan_start_persist"), err.Error()))
 		return nil
 	}
 	e.emitEvent(Event{Time: time.Now(), Category: "SYSTEM", Level: "info",
-		Summary: fmt.Sprintf("启动裁定已补齐(规划师: %s——%s)", decision.Planner, decision.Reason)})
+		Summary: fmt.Sprintf(i18n.T("engine.event.plan_start_supp"), decision.Planner, decision.Reason)})
 	return &flow.Instruction{Agent: decision.Planner, Task: decision.Task, Reason: decision.Reason}
 }
 
@@ -424,7 +425,7 @@ func (e *engine) trackDeadlock(ctx context.Context, inst **flow.Instruction) (st
 		return false
 	}
 	if e.repeats >= deadlockAbortAt {
-		e.pauseWithNotify(notify.KindDeadlock, fmt.Sprintf("僵局熔断: 指令连续 %d 次无进展(%s),已暂停等待人工介入", e.repeats, in.Agent))
+		e.pauseWithNotify(notify.KindDeadlock, fmt.Sprintf(i18n.T("engine.pause.deadlock"), e.repeats, in.Agent))
 		return true
 	}
 	// Arbiter 僵局咨询(repeats ∈ [consultAt, abortAt))。裁定 retry 不清零计数。
@@ -434,7 +435,7 @@ func (e *engine) trackDeadlock(ctx context.Context, inst **flow.Instruction) (st
 	})
 	e.recordFailureDecision("deadlock", in, facts, decision, err)
 	if err != nil {
-		e.pauseWithNotify(notify.KindDeadlock, "僵局裁定失败,已暂停等待人工介入: "+err.Error())
+		e.pauseWithNotify(notify.KindDeadlock, fmt.Sprintf(i18n.T("engine.pause.deadlock_arbiter_fail"), err.Error()))
 		return true
 	}
 	switch decision.Action {
@@ -444,7 +445,7 @@ func (e *engine) trackDeadlock(ctx context.Context, inst **flow.Instruction) (st
 		*inst = &flow.Instruction{Agent: decision.Dispatch.Agent, Task: decision.Dispatch.Task, Reason: decision.Reason}
 		return false
 	default: // abort
-		e.pauseWithNotify(notify.KindDeadlock, "僵局裁定: "+decision.Reason)
+		e.pauseWithNotify(notify.KindDeadlock, fmt.Sprintf(i18n.T("engine.pause.deadlock_arbiter"), decision.Reason))
 		return true
 	}
 }
@@ -484,7 +485,7 @@ func (e *engine) runWorker(ctx context.Context, inst *flow.Instruction) error {
 func (e *engine) handleWorkerError(ctx context.Context, inst *flow.Instruction, werr error) (stop bool) {
 	msg := werr.Error()
 	e.emitEvent(Event{Time: time.Now(), Category: "ERROR", Agent: inst.Agent,
-		Summary: truncate(fmt.Sprintf("%s 失败: %s", inst.Agent, msg), 120), Detail: msg, Level: "error"})
+		Summary: truncate(fmt.Sprintf(i18n.T("engine.event.agent_fail"), inst.Agent, msg), 120), Detail: msg, Level: "error"})
 
 	key := inst.Agent + "\x00" + inst.Task
 	if e.failedKey != key {
@@ -499,7 +500,7 @@ func (e *engine) handleWorkerError(ctx context.Context, inst *flow.Instruction, 
 	})
 	e.recordFailureDecision("worker_failure", inst, facts, decision, err)
 	if err != nil {
-		e.pauseWithNotify(notify.KindWorkerFailure, "失败裁定不可用,已暂停等待人工介入: "+msg+contentFilterAdvice(werr))
+		e.pauseWithNotify(notify.KindWorkerFailure, fmt.Sprintf(i18n.T("engine.pause.fail_arbiter_unavail"), msg)+contentFilterAdvice(werr))
 		return true
 	}
 	switch decision.Action {
@@ -512,7 +513,7 @@ func (e *engine) handleWorkerError(ctx context.Context, inst *flow.Instruction, 
 		e.mu.Unlock()
 		return false
 	default: // abort
-		e.pauseWithNotify(notify.KindWorkerFailure, "失败裁定: "+decision.Reason+contentFilterAdvice(werr))
+		e.pauseWithNotify(notify.KindWorkerFailure, fmt.Sprintf(i18n.T("engine.pause.fail_arbiter"), decision.Reason)+contentFilterAdvice(werr))
 		return true
 	}
 }
@@ -525,7 +526,7 @@ func contentFilterAdvice(werr error) string {
 	if !errors.Is(werr, agentcore.ErrProviderContentFilter) {
 		return ""
 	}
-	return "。这是服务商内容审核拦截(非本地错误),可选: /model 切到无审核层的服务商后输入「继续」;或修改本章草稿(drafts/)措辞后再继续;原样重试大概率仍被拦"
+	return i18n.T("engine.advice.content_filter")
 }
 
 // errInvalidWriteTarget 标记 runWorker 前置校验拦下的非法写作目标，供错误链和

@@ -7,6 +7,7 @@ import (
 
 	"encoding/json"
 	"github.com/voocel/agentcore"
+	"github.com/voocel/ainovel-cli/internal/i18n"
 )
 
 // handleToolUpdate 处理 Worker 的进度中继(ProgressPayload):TOOL 行、流式正文、
@@ -135,8 +136,8 @@ func (o *observer) handleToolUpdate(ev agentcore.Event) {
 			Time:     time.Now(),
 			Category: "ERROR",
 			Agent:    ev.Progress.Agent,
-			Summary:  fmt.Sprintf("%s 错误: %s", ev.Progress.Tool, truncate(msg, 100)),
-			Detail:   fmt.Sprintf("%s 错误: %s", ev.Progress.Tool, msg),
+			Summary:  fmt.Sprintf(i18n.T("host.event.tool_error"), ev.Progress.Tool, truncate(msg, 100)),
+			Detail:   fmt.Sprintf(i18n.T("host.event.tool_error"), ev.Progress.Tool, msg),
 			Kind:     errorKind(nil, msg),
 			Level:    "error",
 			Depth:    1,

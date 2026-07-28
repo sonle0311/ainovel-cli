@@ -9,6 +9,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/voocel/ainovel-cli/internal/i18n"
 	"github.com/voocel/ainovel-cli/internal/rules"
 	"github.com/voocel/ainovel-cli/internal/utils"
 )
@@ -79,9 +80,9 @@ func ProviderPresets() []ProviderPreset {
 func RunSetup() (Config, error) {
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("99")).
-		Render("未检测到配置文件，开始初始化设置..."))
-	fmt.Fprintf(os.Stderr, "  配置文件路径：%s\n", lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render(DefaultConfigPath()))
-	fmt.Fprintf(os.Stderr, "  完成后可随时编辑该文件调整高级设置。\n")
+		Render(i18n.T("setup.no_config")))
+	fmt.Fprintf(os.Stderr, i18n.T("setup.config_path"), lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render(DefaultConfigPath()))
+	fmt.Fprint(os.Stderr, i18n.T("setup.edit_hint"))
 	fmt.Fprintln(os.Stderr)
 
 	// Step 1: 选择 Provider
@@ -96,7 +97,7 @@ func RunSetup() (Config, error) {
 
 	// 自定义代理：额外问名称和 API 协议类型
 	if sp.needType {
-		providerName, err = runTextInput("Provider 名称", "my-proxy")
+		providerName, err = runTextInput(i18n.T("setup.provider_name"), "my-proxy")
 		if err != nil {
 			return Config{}, err
 		}
@@ -110,27 +111,27 @@ func RunSetup() (Config, error) {
 	// Step 2: 输入 API Key
 	var apiKey string
 	if sp.apiKeyOptional {
-		apiKey, err = runOptionalTextInput("[2/4] API Key（可留空）", "留空表示不使用 API Key")
+		apiKey, err = runOptionalTextInput(i18n.T("setup.step2_apikey_optional"), i18n.T("setup.apikey_empty_hint"))
 	} else {
-		apiKey, err = runTextInput("[2/4] API Key", "sk-xxx")
+		apiKey, err = runTextInput(i18n.T("setup.step2_apikey"), "sk-xxx")
 	}
 	if err != nil {
 		return Config{}, err
 	}
 	pc.APIKey = apiKey
 	if apiKey == "" {
-		printStepDone("API Key", "未设置")
+		printStepDone("API Key", i18n.T("setup.unset"))
 	} else {
 		printStepDone("API Key", maskKey(apiKey))
 	}
 
 	// Step 3: Base URL（直接回车使用官方默认地址）
 	baseDefault := sp.baseURL
-	baseHint := "留空使用官方地址"
+	baseHint := i18n.T("setup.base_hint")
 	if baseDefault != "" {
 		baseHint = baseDefault
 	}
-	baseURL, err := runTextInputWithDefault("[3/4] Base URL（直接回车使用默认，代理用户填写代理地址）", baseHint, baseDefault)
+	baseURL, err := runTextInputWithDefault(i18n.T("setup.step3_baseurl"), baseHint, baseDefault)
 	if err != nil {
 		return Config{}, err
 	}
@@ -138,11 +139,11 @@ func RunSetup() (Config, error) {
 	if baseURL != "" {
 		printStepDone("Base URL", baseURL)
 	} else {
-		printStepDone("Base URL", "默认")
+		printStepDone("Base URL", i18n.T("setup.default_val"))
 	}
 
 	// Step 4: 模型名（必填）
-	modelName, err := runTextInput("[4/4] 模型名称", "例如：gpt-4o / claude-sonnet-4 / gemini-2.5-pro")
+	modelName, err := runTextInput(i18n.T("setup.step4_model"), i18n.T("setup.model_placeholder"))
 	if err != nil {
 		return Config{}, err
 	}
@@ -170,12 +171,12 @@ func RunSetup() (Config, error) {
 	rulesDir := rules.DefaultHomeRulesDir()
 
 	fmt.Fprintln(os.Stderr)
-	fmt.Fprintf(os.Stderr, "%s 配置已保存到 %s\n",
+	fmt.Fprintf(os.Stderr, i18n.T("setup.saved"),
 		lipgloss.NewStyle().Foreground(lipgloss.Color("42")).Render("✓"), path)
-	fmt.Fprintf(os.Stderr, "  默认模型：%s\n", modelName)
-	fmt.Fprintln(os.Stderr, "  如需按角色配置不同模型，编辑配置文件即可。")
+	fmt.Fprintf(os.Stderr, i18n.T("setup.default_model"), modelName)
+	fmt.Fprintln(os.Stderr, i18n.T("setup.roles_hint"))
 	if rulesDir != "" {
-		fmt.Fprintf(os.Stderr, "  全局写作偏好可放 %s 下的 .md 文件（见其中 README.txt）\n", rulesDir)
+		fmt.Fprintf(os.Stderr, i18n.T("setup.rules_hint"), rulesDir)
 	}
 	fmt.Fprintln(os.Stderr)
 
@@ -209,7 +210,7 @@ func maskKey(key string) string {
 
 func runProviderSelect() (setupProvider, error) {
 	m := setupSelectModel{
-		title: "[1/4] 选择 Provider",
+		title: i18n.T("setup.step1_provider"),
 		items: setupProviders,
 	}
 	p := tea.NewProgram(m, tea.WithOutput(os.Stderr))
@@ -225,14 +226,14 @@ func runProviderSelect() (setupProvider, error) {
 }
 
 var apiTypeOptions = []setupProvider{
-	{name: "openai", label: "OpenAI 兼容"},
-	{name: "anthropic", label: "Anthropic 兼容"},
-	{name: "gemini", label: "Gemini 兼容"},
+	{name: "openai", label: i18n.T("setup.type_openai")},
+	{name: "anthropic", label: i18n.T("setup.type_anthropic")},
+	{name: "gemini", label: i18n.T("setup.type_gemini")},
 }
 
 func runTypeSelect() (string, error) {
 	m := setupSelectModel{
-		title: "API 协议类型",
+		title: i18n.T("setup.api_type_title"),
 		items: apiTypeOptions,
 	}
 	p := tea.NewProgram(m, tea.WithOutput(os.Stderr))
@@ -334,7 +335,7 @@ func (m setupSelectModel) View() string {
 		}
 		b.WriteString(cursor + label + "\n")
 	}
-	b.WriteString(setupDimStyle.Render("\n  ↑↓ 选择  Enter 确认  Esc 取消"))
+	b.WriteString(setupDimStyle.Render(i18n.T("setup.select_hint")))
 	return b.String()
 }
 
@@ -389,7 +390,7 @@ func (m setupInputModel) View() string {
 		b.WriteString(m.value)
 		b.WriteString(setupCursorStyle.Render("▌"))
 	}
-	b.WriteString(setupDimStyle.Render("  (Enter 确认, Esc 取消)"))
+	b.WriteString(setupDimStyle.Render(i18n.T("setup.input_hint")))
 	b.WriteString("\n")
 	return b.String()
 }
