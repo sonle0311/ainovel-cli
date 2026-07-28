@@ -12,6 +12,7 @@ import (
 	"github.com/voocel/ainovel-cli/internal/entry/headless"
 	"github.com/voocel/ainovel-cli/internal/entry/tui"
 	"github.com/voocel/ainovel-cli/internal/eval"
+	"github.com/voocel/ainovel-cli/internal/i18n"
 	"github.com/voocel/ainovel-cli/internal/rules"
 	buildversion "github.com/voocel/ainovel-cli/internal/version"
 )
@@ -99,6 +100,12 @@ func stdinIsTerminal() bool {
 
 func runWithConfig(cfg bootstrap.Config, opts cliOptions, args []string) {
 	rules.EnsureHomeRulesDir()
+
+	// 界面语言在任何 UI/引擎 goroutine 启动前设置一次；未支持的值回落中文并提示。
+	if _, ok := i18n.Normalize(cfg.UILanguage); !ok {
+		fmt.Fprintf(os.Stderr, "警告: 不支持的 ui_language %q，已回落中文（支持 zh/en/vi）\n", cfg.UILanguage)
+	}
+	i18n.Set(cfg.UILanguage)
 
 	if len(args) > 0 {
 		die("error: 不再支持命令行直接传入小说需求，请启动后在 TUI 输入框中输入")

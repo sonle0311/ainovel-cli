@@ -217,6 +217,10 @@ type Config struct {
 	// 创作参数
 	Style string `json:"style,omitempty"`
 
+	// UILanguage 界面语言（zh/en/vi），空=中文。只影响 TUI 文案，
+	// 不影响创作提示词与小说内容语言（那些由需求描述和 rules 覆盖层决定）。
+	UILanguage string `json:"ui_language,omitempty"`
+
 	// ContextWindow 是旧版全局上下文窗口，保留为模型专属 context_window 之后的
 	// 兼容回退。仅影响压缩阈值，不改变 LLM API 实际请求长度。
 	ContextWindow int `json:"context_window,omitempty"`
