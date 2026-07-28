@@ -12,8 +12,27 @@ var catalogVI = map[string]string{
 	"help.hint_copy_mode": "Ctrl+R bật/tắt chế độ chọn-sao chép (tắt mouse reporting để kéo chọn văn bản; nhấn lần nữa để khôi phục)",
 	"help.modal_footer":   "  ↑↓ cuộn · Esc đóng",
 
+	// commands.go — mô tả lệnh
+	"cmd.help.desc":      "Xem danh sách lệnh",
+	"cmd.model.desc":     "Đổi model và mức suy luận theo từng vai trò",
+	"cmd.lang.desc":      "Đổi ngôn ngữ giao diện (zh/en/vi)",
+	"cmd.config.desc":    "Thêm hoặc sửa Provider, model và cửa sổ ngữ cảnh",
+	"cmd.diag.desc":      "Chẩn đoán sức khoẻ quá trình sáng tác",
+	"cmd.review.desc":    "Bật/tắt chế độ duyệt từng chương",
+	"cmd.next.desc":      "Cho phép viết một chương mới sau khi duyệt",
+	"cmd.import.desc":    "Nhập tiểu thuyết có sẵn theo ngữ nghĩa (không tham số: tiếp tục lần nhập dở; --guide chỉnh cách chia chương bằng ngôn ngữ tự nhiên)",
+	"cmd.reopen.desc":    "Mở lại sách đã hoàn thành để viết tiếp (hướng đi được phân xử trước, rồi tự chạy tiếp)",
+	"cmd.cocreate.desc":  "Tạm dừng viết, cùng lên kế hoạch giai đoạn tiếp theo",
+	"cmd.simulate.desc":  "Đọc ./simulate để tạo hoặc cập nhật hồ sơ mô phỏng văn phong",
+	"cmd.importsim.desc": "Nhập hồ sơ mô phỏng có sẵn, gộp theo dấu vân ngữ liệu",
+	"cmd.export.desc":    "Xuất các chương đã hoàn thành ra TXT/EPUB",
+
+	// command_palette.go — khung lệnh
+	"palette.title": "Lệnh",
+	"palette.hint":  "↑↓ chọn · Tab/Enter chấp nhận · Esc đóng",
+	"palette.more":  " · còn %d lệnh nữa",
+
 	// commands.go — /lang đổi ngôn ngữ giao diện
-	"lang.description": "Đổi ngôn ngữ giao diện (zh/en/vi)",
 	"lang.current":     "Ngôn ngữ giao diện hiện tại: %s (hỗ trợ zh/en/vi, cách dùng: /lang <ngôn ngữ>)",
 	"lang.switched":    "Đã đổi ngôn ngữ giao diện: %s",
 	"lang.unsupported": "Ngôn ngữ %q không được hỗ trợ (hỗ trợ zh/en/vi)",

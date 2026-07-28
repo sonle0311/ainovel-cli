@@ -12,8 +12,27 @@ var catalogZH = map[string]string{
 	"help.hint_copy_mode": "Ctrl+R 切换选中复制模式（关闭鼠标上报后可拖拽选中复制，再按一次恢复）",
 	"help.modal_footer":   "  ↑↓ 滚动 · Esc 关闭",
 
+	// commands.go — 命令描述
+	"cmd.help.desc":      "查看命令列表",
+	"cmd.model.desc":     "切换角色的模型与推理强度",
+	"cmd.lang.desc":      "切换界面语言（zh/en/vi）",
+	"cmd.config.desc":    "新增或编辑 Provider、模型与上下文窗口",
+	"cmd.diag.desc":      "诊断小说创作健康度",
+	"cmd.review.desc":    "切换逐章验收模式",
+	"cmd.next.desc":      "验收后放行一个新章节",
+	"cmd.import.desc":    "语义导入外部小说（无参数则恢复未完成导入；--guide 用自然语言调整切分）",
+	"cmd.reopen.desc":    "重开已完结的书继续创作（方向先经裁定注入，再自动续跑）",
+	"cmd.cocreate.desc":  "暂停创作，共创规划后续阶段走向",
+	"cmd.simulate.desc":  "读取 ./simulate 生成或增量更新仿写画像",
+	"cmd.importsim.desc": "导入已有仿写画像并按语料指纹合并",
+	"cmd.export.desc":    "导出已完成章节为 TXT/EPUB",
+
+	// command_palette.go — 命令弹窗
+	"palette.title": "命令",
+	"palette.hint":  "↑↓ 选择 · Tab/Enter 接受 · Esc 关闭",
+	"palette.more":  " · 还有 %d 个命令",
+
 	// commands.go — /lang 界面语言切换
-	"lang.description": "切换界面语言（zh/en/vi）",
 	"lang.current":     "当前界面语言：%s（支持 zh/en/vi，用法：/lang <语言>）",
 	"lang.switched":    "界面语言已切换：%s",
 	"lang.unsupported": "不支持的语言 %q（支持 zh/en/vi）",

@@ -12,8 +12,27 @@ var catalogEN = map[string]string{
 	"help.hint_copy_mode": "Ctrl+R toggle copy mode (disables mouse reporting so you can drag-select; press again to restore)",
 	"help.modal_footer":   "  ↑↓ scroll · Esc close",
 
+	// commands.go — command descriptions
+	"cmd.help.desc":      "Show command list",
+	"cmd.model.desc":     "Switch model and reasoning effort per role",
+	"cmd.lang.desc":      "Switch UI language (zh/en/vi)",
+	"cmd.config.desc":    "Add or edit providers, models and context windows",
+	"cmd.diag.desc":      "Diagnose novel-writing health",
+	"cmd.review.desc":    "Toggle per-chapter approval mode",
+	"cmd.next.desc":      "Release one new chapter after approval",
+	"cmd.import.desc":    "Semantically import an existing novel (no args resumes an unfinished import; --guide adjusts segmentation in natural language)",
+	"cmd.reopen.desc":    "Reopen a finished book to keep writing (direction is arbitrated first, then auto-resumes)",
+	"cmd.cocreate.desc":  "Pause writing and co-plan the next stage",
+	"cmd.simulate.desc":  "Read ./simulate to build or incrementally update an imitation profile",
+	"cmd.importsim.desc": "Import an existing imitation profile, merged by corpus fingerprint",
+	"cmd.export.desc":    "Export finished chapters as TXT/EPUB",
+
+	// command_palette.go — command popup
+	"palette.title": "Commands",
+	"palette.hint":  "↑↓ select · Tab/Enter accept · Esc close",
+	"palette.more":  " · %d more commands",
+
 	// commands.go — /lang UI language switch
-	"lang.description": "Switch UI language (zh/en/vi)",
 	"lang.current":     "Current UI language: %s (supported: zh/en/vi, usage: /lang <lang>)",
 	"lang.switched":    "UI language switched: %s",
 	"lang.unsupported": "Unsupported language %q (supported: zh/en/vi)",

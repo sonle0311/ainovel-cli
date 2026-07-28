@@ -58,7 +58,7 @@ func commandRegistryInstance() commandRegistry {
 			Name:        "help",
 			Group:       "system",
 			Usage:       "/help",
-			Description: "查看命令列表",
+			Description: i18n.T("cmd.help.desc"),
 			AutoExecute: true,
 			Run: func(m Model, _ []string) (tea.Model, tea.Cmd) {
 				m.help = newHelpState(m.width, m.height)
@@ -70,7 +70,7 @@ func commandRegistryInstance() commandRegistry {
 			Name:        "model",
 			Group:       "system",
 			Usage:       "/model [role]",
-			Description: "切换角色的模型与推理强度",
+			Description: i18n.T("cmd.model.desc"),
 			AutoExecute: true,
 			Run: func(m Model, args []string) (tea.Model, tea.Cmd) {
 				roleHint := ""
@@ -93,7 +93,7 @@ func commandRegistryInstance() commandRegistry {
 			Name:        "lang",
 			Group:       "system",
 			Usage:       "/lang [zh|en|vi]",
-			Description: i18n.T("lang.description"),
+			Description: i18n.T("cmd.lang.desc"),
 			AutoExecute: true,
 			Run: func(m Model, args []string) (tea.Model, tea.Cmd) {
 				if len(args) == 0 {
@@ -119,7 +119,7 @@ func commandRegistryInstance() commandRegistry {
 			Name:        "config",
 			Group:       "system",
 			Usage:       "/config",
-			Description: "新增或编辑 Provider、模型与上下文窗口",
+			Description: i18n.T("cmd.config.desc"),
 			AutoExecute: true,
 			Run: func(m Model, args []string) (tea.Model, tea.Cmd) {
 				if len(args) != 0 {
@@ -136,7 +136,7 @@ func commandRegistryInstance() commandRegistry {
 			Name:        "diag",
 			Group:       "analysis",
 			Usage:       "/diag",
-			Description: "诊断小说创作健康度",
+			Description: i18n.T("cmd.diag.desc"),
 			AutoExecute: true,
 			Run: func(m Model, _ []string) (tea.Model, tea.Cmd) {
 				m.reportSeq++
@@ -149,7 +149,7 @@ func commandRegistryInstance() commandRegistry {
 			Name:        "review",
 			Group:       "writing",
 			Usage:       "/review on|off",
-			Description: "切换逐章验收模式",
+			Description: i18n.T("cmd.review.desc"),
 			Run: func(m Model, args []string) (tea.Model, tea.Cmd) {
 				if len(args) != 1 || (args[0] != "on" && args[0] != "off") {
 					m.applyEvent(host.Event{Time: time.Now(), Category: "ERROR", Summary: "用法：/review on|off", Level: "error"})
@@ -172,7 +172,7 @@ func commandRegistryInstance() commandRegistry {
 			Name:        "next",
 			Group:       "writing",
 			Usage:       "/next",
-			Description: "验收后放行一个新章节",
+			Description: i18n.T("cmd.next.desc"),
 			AutoExecute: true,
 			NeedsIdle:   true,
 			Run: func(m Model, args []string) (tea.Model, tea.Cmd) {
@@ -193,7 +193,7 @@ func commandRegistryInstance() commandRegistry {
 			Name:        "import",
 			Group:       "writing",
 			Usage:       "/import <path> [--yes] [--story=open|closed] [--continue] [--guide=<切分指导>]",
-			Description: "语义导入外部小说（无参数则恢复未完成导入；--guide 用自然语言调整切分）",
+			Description: i18n.T("cmd.import.desc"),
 			NeedsIdle:   true,
 			Run: func(m Model, args []string) (tea.Model, tea.Cmd) {
 				m.importSeq++
@@ -215,7 +215,7 @@ func commandRegistryInstance() commandRegistry {
 			Name:        "reopen",
 			Group:       "writing",
 			Usage:       "/reopen [续写方向]",
-			Description: "重开已完结的书继续创作（方向先经裁定注入，再自动续跑）",
+			Description: i18n.T("cmd.reopen.desc"),
 			NeedsIdle:   true,
 			Run: func(m Model, args []string) (tea.Model, tea.Cmd) {
 				if err := m.runtime.Reopen(strings.Join(args, " ")); err != nil {
@@ -233,7 +233,7 @@ func commandRegistryInstance() commandRegistry {
 			Aliases:     []string{"plan"},
 			Group:       "writing",
 			Usage:       "/cocreate",
-			Description: "暂停创作，共创规划后续阶段走向",
+			Description: i18n.T("cmd.cocreate.desc"),
 			AutoExecute: true,
 			Run: func(m Model, _ []string) (tea.Model, tea.Cmd) {
 				if m.mode != modeRunning {
@@ -260,7 +260,7 @@ func commandRegistryInstance() commandRegistry {
 			Name:        "simulate",
 			Group:       "writing",
 			Usage:       "/simulate",
-			Description: "读取 ./simulate 生成或增量更新仿写画像",
+			Description: i18n.T("cmd.simulate.desc"),
 			NeedsIdle:   true,
 			Run: func(m Model, args []string) (tea.Model, tea.Cmd) {
 				m.simSeq++
@@ -281,7 +281,7 @@ func commandRegistryInstance() commandRegistry {
 			Name:        "importsim",
 			Group:       "writing",
 			Usage:       "/importsim <profile.json>",
-			Description: "导入已有仿写画像并按语料指纹合并",
+			Description: i18n.T("cmd.importsim.desc"),
 			NeedsIdle:   true,
 			Run: func(m Model, args []string) (tea.Model, tea.Cmd) {
 				m.simSeq++
@@ -302,7 +302,7 @@ func commandRegistryInstance() commandRegistry {
 			Name:        "export",
 			Group:       "writing",
 			Usage:       "/export [path] [from=N] [to=M] [--overwrite]",
-			Description: "导出已完成章节为 TXT/EPUB",
+			Description: i18n.T("cmd.export.desc"),
 			AutoExecute: true,
 			Run: func(m Model, args []string) (tea.Model, tea.Cmd) {
 				cmd, err := startExport(m.runtime, args)
