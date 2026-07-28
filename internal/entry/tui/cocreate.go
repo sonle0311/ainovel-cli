@@ -8,6 +8,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/voocel/ainovel-cli/internal/entry/startup"
 	"github.com/voocel/ainovel-cli/internal/host"
+	"github.com/voocel/ainovel-cli/internal/i18n"
 )
 
 type startupMode int
@@ -20,27 +21,27 @@ const (
 func (m startupMode) label() string {
 	switch m {
 	case startupModeCoCreate:
-		return "共创规划"
+		return i18n.T("startup.mode_cocreate")
 	default:
-		return "快速开始"
+		return i18n.T("startup.mode_quick")
 	}
 }
 
 func (m startupMode) subtitle() string {
 	switch m {
 	case startupModeCoCreate:
-		return "先与 AI 对话澄清，再开始创作"
+		return i18n.T("startup.mode_cocreate_subtitle")
 	default:
-		return "一句话直接开始写"
+		return i18n.T("startup.mode_quick_subtitle")
 	}
 }
 
 func placeholderForNewMode(mode startupMode) string {
 	switch mode {
 	case startupModeCoCreate:
-		return "先输入你的核心想法，Enter 开始与 AI 共创"
+		return i18n.T("startup.placeholder_cocreate")
 	default:
-		return "输入一句小说需求，Enter 直接开始创作"
+		return i18n.T("startup.placeholder_quick")
 	}
 }
 
@@ -159,12 +160,12 @@ func (s *cocreateState) buildPlan() (startup.Plan, error) {
 }
 
 func renderStartupModeBar(width int, mode startupMode) string {
-	quick := renderStartupModePill(mode == startupModeQuick, "快速开始")
-	cocreate := renderStartupModePill(mode == startupModeCoCreate, "共创规划")
+	quick := renderStartupModePill(mode == startupModeQuick, i18n.T("startup.mode_quick"))
+	cocreate := renderStartupModePill(mode == startupModeCoCreate, i18n.T("startup.mode_cocreate"))
 	title := lipgloss.NewStyle().
 		Foreground(colorAccent).
 		Bold(true).
-		Render("启动模式")
+		Render(i18n.T("startup.mode_bar"))
 	divider := lipgloss.NewStyle().
 		Foreground(colorDim).
 		Render("·")
