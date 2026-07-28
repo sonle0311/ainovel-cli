@@ -15,7 +15,7 @@ import (
 func renderTopBar(snap host.UISnapshot, width int, spinnerFrame, version string) string {
 	novelName := snap.NovelName
 	if novelName == "" {
-		novelName = "未定书名"
+		novelName = i18n.T("topbar.untitled")
 	}
 
 	var infoParts []string
@@ -45,7 +45,7 @@ func renderTopBar(snap host.UISnapshot, width int, spinnerFrame, version string)
 	if !ok {
 		color = colorDim
 	}
-	disp, ok := statusDisplay[label]
+	disp, ok := statusDisplay()[label]
 	if !ok {
 		disp = struct {
 			icon  string

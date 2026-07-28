@@ -8,6 +8,7 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/voocel/ainovel-cli/internal/host"
+	"github.com/voocel/ainovel-cli/internal/i18n"
 	"github.com/voocel/ainovel-cli/internal/utils"
 )
 
@@ -172,7 +173,7 @@ func retryCountdown(retryAt, now time.Time) string {
 		return ""
 	}
 	secs := int((remain + time.Second - 1) / time.Second)
-	return fmt.Sprintf("%ds 后重试", secs)
+	return fmt.Sprintf(i18n.T("activity.retry_countdown"), secs)
 }
 
 // renderDispatchSummary 渲染 DISPATCH 摘要：Agent 名用角色色，任务用淡色。
@@ -278,7 +279,7 @@ func renderEventFlowViewport(vp viewport.Model, width, height int, focused bool)
 	if focused {
 		titleColor = colorAccent
 	}
-	title := lipgloss.NewStyle().Foreground(titleColor).Render(":: 事件流")
+	title := lipgloss.NewStyle().Foreground(titleColor).Render(i18n.T("activity.event_stream_title"))
 	lineW := width - lipgloss.Width(title) - 4
 	if lineW < 0 {
 		lineW = 0
@@ -303,7 +304,7 @@ func renderStreamPanel(vp viewport.Model, width, height int, focused, running bo
 	// 分隔标题栏（始终醒目）：粗竖条前缀 + 永远 Bold + 强调色，避免与思考的淡灰斜体撞色
 	// focused 时额外下划线，区分焦点态。
 	titleStyle := lipgloss.NewStyle().Foreground(colorAccent).Bold(true).Underline(focused)
-	title := titleStyle.Render("▍实时输出")
+	title := titleStyle.Render(i18n.T("activity.stream_title"))
 	if running {
 		status := renderStreamActivity(frame)
 		title += " " + status

@@ -6,6 +6,7 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/voocel/ainovel-cli/internal/host"
+	"github.com/voocel/ainovel-cli/internal/i18n"
 )
 
 // renderStatusBar 渲染屏幕最底部的用量状态栏，占用输入区原有的末尾空行（零额外高度）：
@@ -72,7 +73,7 @@ func renderStatusBar(snap host.UISnapshot, outputDir string, width int) string {
 		right = dim.Render("./" + filepath.Base(outputDir))
 	}
 	if left == "" && right == "" {
-		return dim.Render("READY")
+		return dim.Render(i18n.T("statusbar.ready"))
 	}
 	return joinInlineSides(left, right, width)
 }
