@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -11,6 +12,7 @@ import (
 	"github.com/voocel/ainovel-cli/internal/entry/startup"
 	"github.com/voocel/ainovel-cli/internal/host"
 	"github.com/voocel/ainovel-cli/internal/host/imp"
+	"github.com/voocel/ainovel-cli/internal/i18n"
 	"github.com/voocel/ainovel-cli/internal/utils"
 )
 
@@ -581,11 +583,11 @@ func (m Model) handleRuntimeMsg(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
 		m.modelConfig.testing = false
 		m.modelConfig.testCancel = nil
 		if errors.Is(msg.err, context.Canceled) {
-			m.modelConfig.message = "连接测试已取消"
+			m.modelConfig.message = i18n.T("config.msg_test_cancelled")
 		} else if msg.err != nil {
 			m.modelConfig.message = msg.err.Error()
 		} else {
-			m.modelConfig.message = "连接测试成功：" + msg.model
+			m.modelConfig.message = fmt.Sprintf(i18n.T("config.msg_test_ok"), msg.model)
 		}
 		return m, nil, true
 	case startResultMsg:

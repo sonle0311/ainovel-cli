@@ -9,6 +9,7 @@ import (
 
 	"github.com/voocel/agentcore"
 	"github.com/voocel/ainovel-cli/internal/bootstrap"
+	"github.com/voocel/ainovel-cli/internal/i18n"
 )
 
 type APIKeyAction string
@@ -270,9 +271,9 @@ func (h *Host) ConfigureModels(draft ModelConfigurationDraft) error {
 	// 模型客户端被重建后重新下发推理强度：applyThinkingLocked 按各角色的新模型能力钳制生效值，
 	// 存储的强度意图保持不变。
 	h.applyThinkingLocked("default")
-	summary := fmt.Sprintf("Provider 配置已保存：%s → %s", draft.Provider, h.configPath)
+	summary := fmt.Sprintf(i18n.T("config.msg_saved"), draft.Provider, h.configPath)
 	if draft.Provider != h.cfg.Provider {
-		summary += "；使用 /model 切换"
+		summary += i18n.T("config.msg_saved_switch_hint")
 	}
 	h.emitEvent(Event{
 		Time: time.Now(), Category: "SYSTEM", Level: "info",
@@ -395,7 +396,7 @@ func (h *Host) TestModelConnection(ctx context.Context, draft ModelConfiguration
 		return fmt.Errorf("创建测试模型客户端失败: %w", err)
 	}
 	if _, err := models.Default.Generate(ctx, []agentcore.Message{agentcore.UserMsg("Reply OK.")}, nil); err != nil {
-		return fmt.Errorf("连接测试失败（%s/%s）: %w", preparedDraft.draft.Provider, modelName, err)
+		return fmt.Errorf("%s: %w", fmt.Sprintf(i18n.T("config.msg_test_fail"), preparedDraft.draft.Provider, modelName), err)
 	}
 	return nil
 }
