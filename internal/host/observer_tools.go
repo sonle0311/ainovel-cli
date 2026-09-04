@@ -1,11 +1,11 @@
 package host
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
 
-	"encoding/json"
 	"github.com/voocel/agentcore"
 	"github.com/voocel/ainovel-cli/internal/i18n"
 )
@@ -87,8 +87,7 @@ func (o *observer) handleToolUpdate(ev agentcore.Event) {
 	case agentcore.ProgressThinking:
 		o.handleThinkingProgress(ev)
 	case agentcore.ProgressRetry:
-		// Arbiter 在 Meta 里保留实际 Retry-After；旧 Worker relay 尚未携带 Delay，
-		// 对它按 agentcore 的标准指数退避还原展示值。
+		// 只展示上游明确报告的实际等待时间，避免本地估算与真实退避节奏不一致。
 		// Summary 不嵌静态延时——UI 依 RetryAt 逐秒倒计时；Detail/日志保留发出时的延时快照。
 		delay := retryProgressDelay(ev.Progress)
 		retryEv := Event{
@@ -113,9 +112,12 @@ func (o *observer) handleToolUpdate(ev agentcore.Event) {
 		if msg == "" {
 			msg = "unknown error"
 		}
-		// 如果有进行中的 TOOL 行，原地标记为失败；否则独立追加 ERROR 行。
+		// 如果有进行中的 TOOL 行，原地标记为失败并把完整错误放进 Detail。
+		// 同一次失败只生成一个 ERROR 级事件，避免 TOOL 失败态与附加 ERROR
+		// 详情在 tui.log 中被误读成两次独立故障。
 		if call, ok := o.toolStarts[ev.Progress.Agent]; ok {
 			delete(o.toolStarts, ev.Progress.Agent)
+			detail := fmt.Sprintf("%s 错误: %s", ev.Progress.Tool, msg)
 			finishEv := Event{
 				ID:         call.id,
 				Time:       call.start,
@@ -123,15 +125,18 @@ func (o *observer) handleToolUpdate(ev agentcore.Event) {
 				Failed:     true,
 				Category:   "TOOL",
 				Agent:      ev.Progress.Agent,
-				Summary:    call.summary,
+				Summary:    fmt.Sprintf("%s 错误: %s", call.summary, truncate(msg, 100)),
+				Detail:     detail,
+				Kind:       errorKind(nil, msg),
 				Level:      "error",
 				Depth:      call.depth,
 				Duration:   time.Since(call.start),
 			}
 			o.emitEv(finishEv)
 			o.persistEvent(finishEv)
+			return
 		}
-		// 附加 ERROR 详情行（补充错误信息，便于排查）
+		// 极少数缺失 start 的进度流无法原地更新，保留独立 ERROR 事件暴露故障。
 		errEv := Event{
 			Time:     time.Now(),
 			Category: "ERROR",
@@ -161,18 +166,7 @@ func retryProgressDelay(p *agentcore.ProgressPayload) time.Duration {
 			return time.Duration(meta.DelayMS) * time.Millisecond
 		}
 	}
-	attempt := p.Attempt
-	if attempt <= 0 {
-		return 0
-	}
-	delay := time.Second
-	for i := 1; i < attempt && delay < 60*time.Second; i++ {
-		delay *= 2
-	}
-	if delay > 60*time.Second {
-		return 60 * time.Second
-	}
-	return delay
+	return 0
 }
 
 func dispatchSummary(agent, task string) string {
@@ -187,6 +181,17 @@ func dispatchSummary(agent, task string) string {
 		return agent
 	}
 	return agent + "（" + truncate(firstLine, 30) + "）"
+}
+
+func dispatchDetail(task, reason string) string {
+	var parts []string
+	if strings.TrimSpace(reason) != "" {
+		parts = append(parts, "派发原因: "+reason)
+	}
+	if strings.TrimSpace(task) != "" {
+		parts = append(parts, "完整任务:\n"+task)
+	}
+	return strings.Join(parts, "\n")
 }
 
 func (o *observer) updateToolCallSummary(agent, tool, summary string) {
@@ -284,13 +289,22 @@ func firstJSONStringField(raw, field string) string {
 	return ""
 }
 
-func (o *observer) emitCallFinish(call *activeCall, category, agentName string, failed bool) {
+func (o *observer) emitCallFinish(call *activeCall, category, agentName string, callErr error) {
 	if call == nil {
 		return
 	}
+	failed := callErr != nil
 	level := "success"
 	if failed {
 		level = "error"
+	}
+	summary := call.summary
+	detail := ""
+	kind := ""
+	if failed {
+		detail = callErr.Error()
+		kind = errorKind(callErr, detail)
+		summary = fmt.Sprintf("%s 错误: %s", call.summary, truncate(detail, 100))
 	}
 	finishEv := Event{
 		ID:         call.id,
@@ -299,7 +313,9 @@ func (o *observer) emitCallFinish(call *activeCall, category, agentName string, 
 		Failed:     failed,
 		Category:   category,
 		Agent:      agentName,
-		Summary:    call.summary,
+		Summary:    summary,
+		Detail:     detail,
+		Kind:       kind,
 		Level:      level,
 		Depth:      call.depth,
 		Duration:   time.Since(call.start),

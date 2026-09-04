@@ -13,9 +13,9 @@ import (
 // renderTopBar 渲染顶部状态栏。
 // 左侧：provider/model，中间：书名，右侧：状态胶囊。
 func renderTopBar(snap host.UISnapshot, width int, spinnerFrame, version string) string {
-	novelName := snap.NovelName
-	if novelName == "" {
-		novelName = i18n.T("topbar.untitled")
+	bookTitle := snap.BookTitle
+	if bookTitle == "" {
+		bookTitle = i18n.T("topbar.untitled")
 	}
 
 	var infoParts []string
@@ -64,7 +64,7 @@ func renderTopBar(snap host.UISnapshot, width int, spinnerFrame, version string)
 	}
 
 	innerW := max(12, width-2)
-	titleText := truncate(novelName, max(8, innerW/3))
+	titleText := truncate(bookTitle, max(8, innerW/3))
 	centerW := max(16, lipgloss.Width(titleText)+6)
 	if centerW > innerW-24 {
 		centerW = max(8, innerW-24)
@@ -143,7 +143,7 @@ func renderDetailPanel(vp viewport.Model, width, height int, focused bool) strin
 }
 
 // renderWelcome 渲染新建态首屏。
-func renderWelcome(width, height int, errMsg string, mode startupMode, importHint string) string {
+func renderWelcome(width, height int, errMsg string, mode startupMode, importHint, updateHint string) string {
 	// 简洁标题
 	title := lipgloss.NewStyle().
 		Foreground(colorAccent).
@@ -230,6 +230,12 @@ func renderWelcome(width, height int, errMsg string, mode startupMode, importHin
 	} else {
 		b.WriteString(lipgloss.NewStyle().Foreground(colorDim).
 			Render(i18n.T("welcome.import_hint")))
+	}
+	if updateHint != "" {
+		// 启动版本检查命中新版本：与 importHint 同款强调样式追加一行。
+		b.WriteString("\n")
+		b.WriteString(lipgloss.NewStyle().Foreground(colorAccent2).Bold(true).
+			Render("! " + updateHint))
 	}
 	b.WriteString("\n\n")
 	b.WriteString(lipgloss.NewStyle().Foreground(colorDim).Italic(true).

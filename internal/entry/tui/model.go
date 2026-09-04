@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/viewport"
@@ -13,7 +12,6 @@ import (
 	"github.com/charmbracelet/x/ansi"
 	"github.com/voocel/ainovel-cli/internal/host"
 	"github.com/voocel/ainovel-cli/internal/i18n"
-	"github.com/voocel/ainovel-cli/internal/tools"
 	"github.com/voocel/ainovel-cli/internal/utils"
 )
 
@@ -54,63 +52,65 @@ var toolSpinnerFrames = []string{"⣾", "⣽", "⣻", "⢿", "⡿", "⣟", "⣯"
 
 // Model 是 TUI 的顶层状态。
 type Model struct {
-	runtime        *host.Host
-	askBridge      *askUserBridge
-	askState       *askUserState
-	cocreate       *cocreateState
-	help           *helpState
-	modelSwitch    *modelSwitchState
-	modelConfig    *modelConfigState
-	report         *reportState
-	version        string
-	importer       *importState
-	importSeq      int
-	simulator      *simulationState
-	simSeq         int
-	compItems      []commandPaletteItem
-	compIdx        int
-	compActive     bool
-	commandToken   string // 当前已注册的命令 token；仅渲染该段，不染参数
-	snapshot       host.UISnapshot
-	events         []host.Event
-	eventIndex     map[string]int   // event.ID → m.events 下标；调用类事件到达时原地更新
-	viewport       viewport.Model   // 事件流 viewport
-	streamVP       viewport.Model   // 流式输出 viewport
-	detailVP       viewport.Model   // 右侧详情 viewport
-	stateVP        viewport.Model   // 左侧状态侧栏 viewport（可滚动）
-	streamBuf      *strings.Builder // 流式文本累积缓冲
-	streamRounds   []string
-	textarea       textarea.Model
-	width          int
-	height         int
-	autoScroll     bool
-	streamScroll   bool      // 流式面板自动跟随
-	streamDirty    bool      // streamRounds 有未刷新的 delta；由 streamFlushTick 60fps 合并
-	lastKeyAt      time.Time // 上次非 Enter 按键时间；KeyEnter 节流防粘贴 \n 流误触发提交
-	inputHistory   []string  // 已提交的输入历史（去重：相邻不重复）
-	historyIdx     int       // 当前浏览索引；== len(inputHistory) 表示"未浏览，正在编辑草稿"
-	historyDraft   string    // 进入历史浏览前保存的草稿，回到末端时恢复
-	focusPane      focusPane
-	hoverPane      focusPane
-	hoverActive    bool
-	mode           appMode
-	starting       bool // UI 已进入工作台，Host 正在执行启动初始化
-	startupMode    startupMode
-	importHint     string // 启动时检测到未完成导入的提示（欢迎屏显示；发起导入后清空）
-	cocreateSeq    int
-	reportSeq      int
-	err            error
-	spinnerIdx     int
-	toolSpinnerIdx int  // 事件流进行中行的独立帧索引（150ms tick，不影响顶栏/星星）
-	cursorIdx      int  // 流式光标帧索引（独立 tick）
-	streamRound    int  // 流式输出轮次计数
-	quitPending    bool // 双次 Ctrl+C 退出确认
-	abortPending   bool // 等待 Done 回来的手动暂停
-	mouseOff       bool // true 时已禁用鼠标上报，让用户原生拖拽选中复制；再次切换恢复
+	runtime            *host.Host
+	cocreate           *cocreateState
+	help               *helpState
+	modelSwitch        *modelSwitchState
+	modelConfig        *modelConfigState
+	report             *reportState
+	version            string
+	importer           *importState
+	importSeq          int
+	simulator          *simulationState
+	simSeq             int
+	compItems          []commandPaletteItem
+	compIdx            int
+	compActive         bool
+	commandToken       string // 当前已注册的命令 token；仅渲染该段，不染参数
+	snapshot           host.UISnapshot
+	events             []host.Event
+	eventIndex         map[string]int   // event.ID → m.events 下标；调用类事件到达时原地更新
+	viewport           viewport.Model   // 事件流 viewport
+	streamVP           viewport.Model   // 流式输出 viewport
+	detailVP           viewport.Model   // 右侧详情 viewport
+	stateVP            viewport.Model   // 左侧状态侧栏 viewport（可滚动）
+	streamBuf          *strings.Builder // 流式文本累积缓冲
+	streamRounds       []string
+	textarea           textarea.Model
+	width              int
+	height             int
+	autoScroll         bool
+	streamScroll       bool      // 流式面板自动跟随
+	streamDirty        bool      // streamRounds 有尚未刷新的 delta
+	flushPending       bool      // 已调度一次流式刷新，避免每个 delta 重复启动 timer
+	lastKeyAt          time.Time // 上次非 Enter 按键时间；KeyEnter 节流防粘贴 \n 流误触发提交
+	inputHistory       []string  // 已提交的输入历史（去重：相邻不重复）
+	historyIdx         int       // 当前浏览索引；== len(inputHistory) 表示"未浏览，正在编辑草稿"
+	historyDraft       string    // 进入历史浏览前保存的草稿，回到末端时恢复
+	focusPane          focusPane
+	hoverPane          focusPane
+	hoverActive        bool
+	mode               appMode
+	starting           bool // UI 已进入工作台，Host 正在执行启动初始化
+	startupMode        startupMode
+	importHint         string // 启动时检测到未完成导入的提示（欢迎屏显示；发起导入后清空）
+	updateHint         string // 启动版本检查发现新版本的提示（欢迎屏与事件流显示）
+	disableUpdateCheck bool   // 配置关闭启动版本检查（bootstrap.Config.DisableUpdateCheck）
+	cocreateSeq        int
+	reportSeq          int
+	err                error
+	spinnerIdx         int
+	toolSpinnerIdx     int  // 事件流进行中行的独立帧索引（150ms tick，不影响顶栏/星星）
+	toolTicking        bool // 已启动工具动画 timer；无运行事件时自动停止
+	cursorIdx          int  // 流式光标帧索引（随主动画推进）
+	streamRound        int  // 流式输出轮次计数
+	quitPending        bool // 双次 Ctrl+C 退出确认
+	abortPending       bool // 等待 Done 回来的手动暂停
+	mouseOff           bool // true 时已禁用鼠标上报，让用户原生拖拽选中复制；再次切换恢复
 }
 
 // NewModel 创建 TUI Model。
-func NewModel(rt *host.Host, bridge *askUserBridge, version string) Model {
+func NewModel(rt *host.Host, version string) Model {
 	ta := textarea.New()
 	ta.Placeholder = placeholderForNewMode(startupModeQuick)
 	ta.CharLimit = 5000
@@ -146,7 +146,6 @@ func NewModel(rt *host.Host, bridge *askUserBridge, version string) Model {
 
 	return Model{
 		runtime:      rt,
-		askBridge:    bridge,
 		version:      strings.TrimSpace(version),
 		autoScroll:   true,
 		streamScroll: true,
@@ -164,19 +163,20 @@ func NewModel(rt *host.Host, bridge *askUserBridge, version string) Model {
 }
 
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(
+	cmds := []tea.Cmd{
 		textarea.Blink,
 		listenEvents(m.runtime),
-		listenAskUser(m.askBridge),
 		listenDone(m.runtime),
 		listenStream(m.runtime),
 		tickSnapshot(m.runtime),
 		bootstrapRuntime(m.runtime),
 		tickSpinner(),
-		tickToolSpinner(),
-		tickCursor(),
-		tickStreamFlush(),
-	)
+	}
+	// 启动版本检查：后台一次；错误仅写日志，命中新版本才浮出提醒。
+	if !m.disableUpdateCheck {
+		cmds = append(cmds, checkForUpdate(m.version))
+	}
+	return tea.Batch(cmds...)
 }
 
 func (m *Model) paneAtMouse(x, y int) (focusPane, bool) {
@@ -627,9 +627,6 @@ func (m Model) View() string {
 			AlignVertical(lipgloss.Center).
 			Render(i18n.T("error.terminal_too_narrow"))
 	}
-	if m.askState != nil {
-		return renderAskUserModal(m.width, m.height, m.askState)
-	}
 	if m.cocreate != nil {
 		return renderCoCreateModal(m.width, m.height, m.cocreate, errorText(m.err), m.textarea.View(), m.spinnerIdx, m.quitPending)
 	}
@@ -657,7 +654,7 @@ func (m Model) View() string {
 		if m.err != nil {
 			errMsg = m.err.Error()
 		}
-		body = renderWelcome(m.width, bodyH, errMsg, m.startupMode, m.importHint)
+		body = renderWelcome(m.width, bodyH, errMsg, m.startupMode, m.importHint, m.updateHint)
 	} else {
 		leftW := m.sidebarWidth()
 		rightW := m.detailWidth()
@@ -785,13 +782,13 @@ func (m Model) handleCoCreateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, tea.Batch(resumeFromCoCreate(m.runtime, draft), m.textarea.Focus())
 		}
 		// 冷启动共创：用整理好的创作指令开始创作。
-		plan, err := state.buildPlan()
+		prompt, err := state.buildPrompt()
 		if err != nil {
 			m.err = err
 			return m, nil
 		}
-		cmd := m.enterStarting(plan.RawPrompt)
-		return m, tea.Batch(startRuntime(m.runtime, plan), cmd)
+		cmd := m.enterStarting(prompt)
+		return m, tea.Batch(startRuntime(m.runtime, prompt), cmd)
 	case tea.KeyEnter:
 		// Alt+Enter → 主动换行，让 textarea.Update 接管（KeyMap.InsertNewline 已绑此键）
 		if msg.Alt {
@@ -802,6 +799,7 @@ func (m Model) handleCoCreateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// 导致 "abc\ndef" 被吞成 "abcdef"，与 base 路径语义不一致。
 		if !m.lastKeyAt.IsZero() && time.Since(m.lastKeyAt) < 50*time.Millisecond {
 			var cmd tea.Cmd
+			state.resetSuggestionInput()
 			m.textarea, cmd = m.textarea.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{' '}})
 			m.refitTextareaHeight()
 			return m, cmd
@@ -821,22 +819,21 @@ func (m Model) handleCoCreateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		cmd := m.sendCoCreate()
 		return m, cmd
 	case tea.KeyCtrlU:
+		state.resetSuggestionInput()
 		m.textarea.Reset()
 		m.refitTextareaHeight()
 		return m, nil
 	}
 
-	// 数字键 1/2/3 在 textarea 为空且有建议时 → 填入对应建议（不发送，可编辑）。
-	// 仅在空输入框时拦截，避免影响用户主动打数字。awaiting 时建议不展示，
-	// 这里也无需额外判断（state.suggestions 为空即跳过）。
+	// 数字键 1/2/3 可连续组合建议：首次填入，后续用分号追加，重复选择忽略。
+	// 任意手动编辑都会退出快捷组合状态，之后的数字保持普通输入语义。
 	if msg.Type == tea.KeyRunes && len(msg.Runes) == 1 && !state.awaiting {
 		if r := msg.Runes[0]; r >= '1' && r <= '3' {
-			if strings.TrimSpace(m.textarea.Value()) == "" {
-				if sugs := state.suggestions(); int(r-'0') <= len(sugs) {
-					m.textarea.SetValue(sugs[r-'1'])
-					m.refitTextareaHeight()
-					return m, nil
-				}
+			if value, handled := state.appendSuggestion(int(r-'1'), m.textarea.Value()); handled {
+				m.textarea.SetValue(value)
+				m.textarea.CursorEnd()
+				m.refitTextareaHeight()
+				return m, nil
 			}
 		}
 	}
@@ -849,6 +846,7 @@ func (m Model) handleCoCreateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if msg, ok = cleanHumanKeyRunes(msg); !ok {
 		return m, nil
 	}
+	state.resetSuggestionInput()
 	if msg.Type == tea.KeyRunes {
 		m.lastKeyAt = time.Now()
 	}
@@ -876,83 +874,6 @@ func (m Model) exitCoCreate() (tea.Model, tea.Cmd) {
 	m.textarea.SetValue(initial)
 	m.textarea.Placeholder = placeholderForNewMode(m.startupMode)
 	return m, m.textarea.Focus()
-}
-
-func (m Model) handleAskUserKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	if m.askState == nil {
-		return m, nil
-	}
-	state := m.askState
-	q := state.currentQuestion()
-
-	if state.typing {
-		switch msg.Type {
-		case tea.KeyEsc:
-			state.cancelCurrentTyping()
-			return m, nil
-		case tea.KeyEnter:
-			if state.finishCurrentAnswer() {
-				state.submit()
-				m.askState = nil
-				return m, m.textarea.Focus()
-			}
-			return m, nil
-		case tea.KeyBackspace, tea.KeyCtrlH:
-			if state.input != "" {
-				_, size := utf8.DecodeLastRuneInString(state.input)
-				state.input = state.input[:len(state.input)-size]
-			}
-			return m, nil
-		default:
-			if msg.Type == tea.KeyRunes {
-				state.input += utils.CleanInputRunes(msg.Runes)
-			}
-			return m, nil
-		}
-	}
-
-	switch msg.Type {
-	case tea.KeyEsc:
-		// 关闭弹窗，返回空答案
-		state.request.resultCh <- askUserResult{
-			resp: &tools.AskUserResponse{
-				Answers: make(map[string]string),
-				Notes:   make(map[string]string),
-			},
-		}
-		m.askState = nil
-		return m, m.textarea.Focus()
-	case tea.KeyUp:
-		state.moveCursor(-1)
-	case tea.KeyDown:
-		state.moveCursor(1)
-	case tea.KeySpace:
-		if q.MultiSelect {
-			state.toggleSelection()
-			if state.cursor == len(q.Options) && !state.selected[state.cursor] {
-				state.input = ""
-			}
-		}
-	case tea.KeyEnter:
-		if q.MultiSelect {
-			if state.cursor == len(q.Options) {
-				state.toggleSelection()
-				if state.selected[state.cursor] {
-					state.typing = true
-				}
-				return m, nil
-			}
-			if len(state.selected) == 0 {
-				state.toggleSelection()
-			}
-		}
-		if state.finishCurrentAnswer() {
-			state.submit()
-			m.askState = nil
-			return m, m.textarea.Focus()
-		}
-	}
-	return m, nil
 }
 
 // overlayAboveInput 将 overlay 浮动叠加在 base 视图的底部（inputBox 上方），

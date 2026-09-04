@@ -52,7 +52,7 @@ var catalogZH = map[string]string{
 	"welcome.example_1":             "写一部 12 章都市悬疑小说，主角是一名女法医",
 	"welcome.example_2":             "创作一部仙侠长篇，主角从凡人修炼至飞升",
 	"welcome.example_3":             "写一个科幻短篇，讲述 AI 觉醒后的伦理困境",
-	"welcome.import_hint":           "已有小说存稿想接着写？输入 /import <文件路径> 导入后续写",
+	"welcome.import_hint":           "已有设定/大纲？/start <文件路径> 创建新书 · 已有小说存稿？/import <文件路径> 导入续写",
 	"welcome.tab_hint":              "Tab 切换模式 · 快速开始下 Enter 直接创作 · 共创规划下 Enter 进入对话",
 
 	// cocreate.go — 启动模式
@@ -346,7 +346,7 @@ var catalogZH = map[string]string{
 	"cocreate.ph_stage_canstart":   "继续补充，或按 Ctrl+S 应用方向并继续创作",
 	"cocreate.ph_canstart":         "继续补充，或按 Ctrl+S 开始创作",
 	"cocreate.ph_default":          "继续补充你的要求，Enter 发送给 AI",
-	"cocreate.suggestions_hint":    "AI 建议（按数字键填入输入框）：",
+	"cocreate.suggestions_hint":    "AI 建议（按 1/2/3 组合，可编辑后发送）：",
 	"cocreate.title":               "共创规划",
 	"cocreate.subtitle":            "先把需求聊清楚，再开始创作",
 	"cocreate.title_stage":         "阶段共创",
@@ -589,4 +589,25 @@ var catalogZH = map[string]string{
 	"imp.err.read_progress":             "读取进度：%w",
 	"imp.err.non_empty_book":            "已有 %d 个完成章节，拒绝把外部小说并入非空书籍",
 	"imp.err.read_guidance":             "读取切分指导: %w",
+
+	// sync & revision — 章节修订与同步
+	"cmd.sync.desc":                       "检查或接纳手动修改的已完成章节",
+	"cmd.sync.err_start":                  "章节同步启动失败：%v",
+	"cmd.sync.analyzing":                  "正在分析并接纳章节修订...",
+	"cmd.sync.checking":                   "正在检查章节外部修改...",
+	"cmd.sync.err_unknown_arg":            "未知参数 %q（支持：--check）",
+	"revision.msg_no_changes":             "未检测到章节外部修改",
+	"revision.chapter_summary":            "第%d章：%s",
+	"revision.story_changed":              "（剧情事实已更新）",
+	"revision.downstream_issues":          "（发现%d项后续冲突）",
+	"revision.applied_summary":            "已接纳章节修订：%v",
+	"revision.err_sync_failed":            "章节同步失败：%v",
+	"revision.msg_changes_detected":       "检测到章节正文已被外部修改：%v；执行 /sync 接纳",
+	"engine.pause.stuck_rewrite_dropped":  "；第 %d 章已移出返工队列(保留上一版终稿),继续创作将从后续章节推进",
+	"host.err.output_book_missing":        "输出目录已有章节，但作品信息不存在",
+	"host.event.reopen_steer_dir":         "续写方向: %s",
+	"host.action.sync_revision":           "同步章节修订",
+	"host.err.read_revision_pending":      "读取修订恢复记录: %w",
+	"host.err.check_external_revision":    "检查章节外部修订: %w",
+	"host.err.external_revision_detected": "检测到章节正文已被外部修改：%v；请先执行 /sync",
 }

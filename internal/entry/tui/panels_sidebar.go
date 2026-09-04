@@ -104,9 +104,6 @@ func renderStateContent(snap host.UISnapshot, contentW int) string {
 		sections = append(sections, renderSidebarSection(i18n.T("sidebar.section_cache"), body, contentW))
 	}
 
-	if body := renderContextSidebar(snap, contentW); body != "" {
-		sections = append(sections, renderSidebarSection(i18n.T("sidebar.section_context"), body, contentW))
-	}
 
 	return strings.Join(sections, "\n\n")
 }
@@ -568,29 +565,6 @@ func formatTokensCompact(n int) string {
 	return fmt.Sprintf("%d", n)
 }
 
-func renderContextSidebar(snap host.UISnapshot, width int) string {
-	if snap.ContextWindow <= 0 && snap.ContextStrategy == "" && snap.ContextScope == "" {
-		return ""
-	}
-	var b strings.Builder
-	b.WriteString(renderContextUsageField(i18n.T("sidebar.ctx_main"), snap.ContextPercent, snap.ContextTokens, snap.ContextWindow))
-	if strategy := contextStrategyLabel(snap.ContextStrategy); strategy != "" {
-		b.WriteString(renderField(i18n.T("sidebar.ctx_strategy"), truncate(strategy, max(8, width-12))))
-	}
-	if scope := contextScopeLabel(snap.ContextScope); scope != "" {
-		b.WriteString(renderField(i18n.T("sidebar.ctx_scope"), scope))
-	}
-	if snap.ContextSummaryCount > 0 {
-		b.WriteString(renderField(i18n.T("sidebar.ctx_summary"), fmt.Sprintf(i18n.T("sidebar.ctx_summary_count"), snap.ContextSummaryCount)))
-	}
-	if snap.ContextActiveMessages > 0 {
-		b.WriteString(renderField(i18n.T("sidebar.ctx_messages"), fmt.Sprintf("%d", snap.ContextActiveMessages)))
-	}
-	if snap.ContextCompactedCount > 0 || snap.ContextKeptCount > 0 {
-		b.WriteString(renderField(i18n.T("sidebar.ctx_rewrite"), fmt.Sprintf("%d → %d", snap.ContextCompactedCount, snap.ContextKeptCount)))
-	}
-	return b.String()
-}
 
 func contextScopeLabel(scope string) string {
 	switch scope {

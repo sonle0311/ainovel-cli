@@ -25,8 +25,10 @@ import (
 	"github.com/voocel/ainovel-cli/internal/host/imp"
 	"github.com/voocel/ainovel-cli/internal/host/sim"
 	"github.com/voocel/ainovel-cli/internal/i18n"
+	runtimelog "github.com/voocel/ainovel-cli/internal/logger"
 	modelreg "github.com/voocel/ainovel-cli/internal/models"
 	"github.com/voocel/ainovel-cli/internal/notify"
+	"github.com/voocel/ainovel-cli/internal/revision"
 	"github.com/voocel/ainovel-cli/internal/rules"
 	storepkg "github.com/voocel/ainovel-cli/internal/store"
 	"github.com/voocel/ainovel-cli/internal/tools"
@@ -39,10 +41,11 @@ type Host struct {
 	cfg             bootstrap.Config
 	bundle          assets.Bundle
 	store           *storepkg.Store
+	bookLease       *bookLease
+	styleStats      *tools.StyleStatsIndex
 	models          *bootstrap.ModelSet
 	engine          *engine
 	thinkingApplier agents.ApplyThinking // /model 调推理强度时联动各 Worker
-	askUser         *tools.AskUserTool
 	writerRestore   *ctxpack.WriterRestorePack
 	userRules       *userrules.Service
 	observer        *observer
@@ -52,6 +55,8 @@ type Host struct {
 	gate            *ChapterAdvanceGate // 章节许可与一次性暂停的统一政策组件
 	notifier        *notify.Notifier    // 无人值守告警；未启用为 nil（Send nil 安全）
 	configPath      string              // 配置写盘目标：/config、/model 就近写当前生效的那份（项目级存在则写它，否则全局）
+	logCleanup      func()
+	fileLogErr      error
 
 	events   chan Event
 	streamCh chan string
@@ -60,7 +65,7 @@ type Host struct {
 	mu         sync.Mutex
 	lifecycle  lifecycle
 	cocreating bool   // 阶段共创占用：paused 窗口内堵住 import/simulate/continue 的并发介入
-	exclusive  string // 后台独占作业占用（导入/仿写）：非空表示某作业在跑，堵住并发独占入口
+	exclusive  string // 后台独占作业占用（导入/仿写/修订）：非空表示某作业在跑，堵住并发独占入口
 	// exclusiveCancel 是当前独占作业的取消函数：预算硬停/手动暂停须能停掉正在烧钱的
 	// 导入，而不仅是 Engine——abortWithEvent 在 Engine 未运行时取消它（预算哨兵的
 	// abort 回调与手动 Abort 共用同一停机机制）。releaseExclusive 一并清空。
@@ -70,6 +75,9 @@ type Host struct {
 	closing         bool
 
 	interMu sync.Mutex // 干预裁定 FIFO 串行(同一时刻至多一次在途咨询)
+
+	outputMu     sync.RWMutex
+	outputClosed bool
 
 	// runCtx 约束宿主侧的 LLM 裁定调用(启动裁定/干预分诊);Close 取消,
 	// 避免退出时仍有裁定在途且无法中断。
@@ -87,25 +95,61 @@ const (
 )
 
 // New 创建 Host。
-func New(cfg bootstrap.Config, bundle assets.Bundle) (*Host, error) {
+func New(cfg bootstrap.Config, bundle assets.Bundle, options ...NewOption) (*Host, error) {
 	cfg.FillDefaults()
 	if err := cfg.ValidateBase(); err != nil {
 		return nil, err
 	}
-	slog.Info("启动", "module", "boot", "provider", cfg.Provider, "model", cfg.ModelName, "output", cfg.OutputDir)
+	var opts newOptions
+	for _, option := range options {
+		if option != nil {
+			option(&opts)
+		}
+	}
 
-	// 起后台 goroutine 从 OpenRouter 刷新模型元数据（窗口/价格），磁盘缓存 24h。
-	modelreg.StartPricingRefresh(modelreg.DefaultRegistry(), bootstrap.DefaultConfigDir())
+	bookLease, err := acquireBookLease(cfg.OutputDir)
+	if err != nil {
+		return nil, err
+	}
+	keepBookLease := false
+	var logCleanup func()
+	defer func() {
+		if keepBookLease {
+			return
+		}
+		if err := bookLease.Close(); err != nil {
+			slog.Error("释放小说目录占用失败", "module", "host", "dir", cfg.OutputDir, "err", err)
+		}
+		if logCleanup != nil {
+			logCleanup()
+		}
+	}()
+
+	var fileLogErr error
+	if opts.logFile != "" {
+		logCleanup, fileLogErr = runtimelog.SetupFile(cfg.OutputDir, opts.logFile, opts.logAlsoStderr, opts.logAttrs...)
+		if fileLogErr != nil {
+			logCleanup = nil
+			slog.Warn("文件日志不可用，继续使用当前进程日志", "module", "host", "file", opts.logFile, "err", fileLogErr)
+		}
+	}
+
+	slog.Info("启动", "module", "boot", "provider", cfg.Provider, "model", cfg.ModelName, "output", cfg.OutputDir)
 
 	store := storepkg.NewStore(cfg.OutputDir)
 	if err := store.Init(); err != nil {
 		return nil, fmt.Errorf("init store: %w", err)
+	}
+	if err := upgradeProject(store); err != nil {
+		return nil, err
 	}
 	// RunMeta 是所有控制语义的事实源，必须在构造模型/后台任务之前完成校验。
 	// 未知 advance mode 直接返回结构化错误；禁止猜测降级后继续写盘。
 	if err := store.RunMeta.Init(cfg.Style, cfg.Provider, cfg.ModelName); err != nil {
 		return nil, fmt.Errorf("init run meta: %w", err)
 	}
+	// 起后台 goroutine 从 OpenRouter 刷新模型元数据（窗口/价格），磁盘缓存 24h。
+	modelreg.StartPricingRefresh(modelreg.DefaultRegistry(), bootstrap.DefaultConfigDir())
 
 	models, err := bootstrap.NewModelSet(cfg)
 	if err != nil {
@@ -138,7 +182,8 @@ func New(cfg bootstrap.Config, bundle assets.Bundle) (*Host, error) {
 
 	// onGuardBlock 前置声明:h 构造后才能挂事件浮出闭包。
 	var onGuardBlock func(agent, reason string, consecutive int32)
-	workers, askUser, restore, applyThinking := agents.BuildWorkers(cfg, store, models, bundle, usage.Record,
+	styleStats := tools.NewStyleStatsIndex(store)
+	workers, restore, applyThinking := agents.BuildWorkers(cfg, store, styleStats, models, bundle, usage.Record,
 		func(agent, reason string, consecutive int32) {
 			if onGuardBlock != nil {
 				onGuardBlock(agent, reason, consecutive)
@@ -150,14 +195,17 @@ func New(cfg bootstrap.Config, bundle assets.Bundle) (*Host, error) {
 		cfg:             cfg,
 		bundle:          bundle,
 		store:           store,
+		bookLease:       bookLease,
+		styleStats:      styleStats,
 		models:          models,
 		thinkingApplier: applyThinking,
-		askUser:         askUser,
 		writerRestore:   restore,
 		userRules:       userrules.NewService(store, models.Default, rules.DefaultOptions()),
 		usage:           usage,
 		usageCancel:     usageCancel,
 		configPath:      bootstrap.EffectiveConfigPath(),
+		logCleanup:      logCleanup,
+		fileLogErr:      fileLogErr,
 		events:          make(chan Event, 100),
 		streamCh:        make(chan string, 256),
 		done:            make(chan struct{}, 4),
@@ -239,6 +287,7 @@ func New(cfg bootstrap.Config, bundle assets.Bundle) (*Host, error) {
 		onDone:  h.runEnded,
 	}
 
+	keepBookLease = true
 	return h, nil
 }
 
@@ -324,7 +373,7 @@ func (h *Host) StartPrepared(rawRequirement string) error {
 	if err := h.store.Checkpoints.Reset(); err != nil {
 		return fmt.Errorf("reset checkpoints: %w", err)
 	}
-	if err := h.store.Progress.Init("", 0); err != nil {
+	if err := h.store.Progress.Init(0); err != nil {
 		return fmt.Errorf("init progress: %w", err)
 	}
 	// 输入事实先于裁定落盘:裁定失败(模型故障等)后 StartPrompt 仍在,
@@ -361,7 +410,6 @@ func (h *Host) StartPrepared(rawRequirement string) error {
 		return fmt.Errorf(i18n.T("host.err.record_plan_start"), err)
 	}
 
-	slog.Info("开始创作", "module", "host", "planner", decision.Planner)
 	h.emitEvent(Event{Time: time.Now(), Category: "SYSTEM",
 		Summary: fmt.Sprintf(i18n.T("host.event.start_create"), decision.Planner, decision.Reason), Level: "info"})
 	if !h.startEngine(&flow.Instruction{Agent: decision.Planner, Task: decision.Task, Reason: decision.Reason}) {
@@ -382,7 +430,14 @@ func (h *Host) refuseNewBookOverExisting() error {
 	if progress == nil || len(progress.CompletedChapters) == 0 {
 		return nil
 	}
-	name := strings.TrimSpace(progress.NovelName)
+	book, err := h.store.Book.Load()
+	if err != nil {
+		return err
+	}
+	if book == nil {
+		return errors.New(i18n.T("host.err.output_book_missing"))
+	}
+	name := strings.TrimSpace(book.Title)
 	if name == "" {
 		name = i18n.T("topbar.untitled")
 	}
@@ -451,12 +506,18 @@ func (h *Host) Reopen(direction string) error {
 		return fmt.Errorf(i18n.T("host.err.exclusive_reopen"), ex)
 	}
 	h.mu.Unlock()
+	if err := h.requireCleanChapters(); err != nil {
+		return err
+	}
 
 	if err := h.store.Progress.ReopenContinue(); err != nil {
 		return err
 	}
-	slog.Info("重开已完结书为创作状态", "module", "host", "direction", direction)
-	h.emitEvent(Event{Time: time.Now(), Category: "SYSTEM", Summary: i18n.T("host.event.reopened"), Level: "info"})
+	reopenEvent := Event{Time: time.Now(), Category: "SYSTEM", Summary: i18n.T("host.event.reopened"), Level: "info"}
+	if d := strings.TrimSpace(direction); d != "" {
+		reopenEvent.Detail = reopenEvent.Summary + "\n" + fmt.Sprintf(i18n.T("host.event.reopen_steer_dir"), d)
+	}
+	h.emitEvent(reopenEvent)
 	if d := strings.TrimSpace(direction); d != "" {
 		if err := h.store.RunMeta.SetPendingSteer(d); err != nil {
 			return fmt.Errorf(i18n.T("host.err.reopen_steer_fail"), err)
@@ -482,7 +543,6 @@ func (h *Host) Resume() (string, error) {
 		return "", fmt.Errorf(i18n.T("host.err.exclusive_resume"), ex)
 	}
 	h.mu.Unlock()
-
 	label, err := resumeLabel(h.store)
 	if err != nil {
 		return "", err
@@ -490,14 +550,15 @@ func (h *Host) Resume() (string, error) {
 	if label == "" {
 		return "", nil // 新建模式，无恢复
 	}
+	if err := h.requireCleanChapters(); err != nil {
+		return label, err
+	}
 	if err := h.budget.Refuse(); err != nil {
 		return "", err
 	}
 
-	slog.Info("恢复创作", "module", "host", "label", label)
 	h.emitEvent(Event{Time: time.Now(), Category: "SYSTEM", Summary: fmt.Sprintf(i18n.T("host.event.resume"), label), Level: "info"})
 	for _, w := range h.store.CheckConsistency() {
-		slog.Warn("一致性告警", "module", "host", "detail", w)
 		h.emitEvent(Event{Time: time.Now(), Category: "SYSTEM", Summary: fmt.Sprintf(i18n.T("host.event.consistency_warn"), w), Level: "warn"})
 	}
 	// 确保用户规则快照存在；已有则廉价读取。
@@ -698,6 +759,9 @@ func (h *Host) Continue(text string) error {
 		return fmt.Errorf(i18n.T("host.err.exclusive_continue"), ex)
 	}
 	h.mu.Unlock()
+	if err := h.requireCleanChapters(); err != nil {
+		return err
+	}
 	if err := h.budget.Refuse(); err != nil {
 		return err
 	}
@@ -751,6 +815,9 @@ func (h *Host) AdvanceOneChapter() error {
 	}
 	if ex != "" {
 		return fmt.Errorf(i18n.T("host.err.exclusive_next"), ex)
+	}
+	if err := h.requireCleanChapters(); err != nil {
+		return err
 	}
 	meta, err := h.store.RunMeta.Load()
 	if err != nil {
@@ -873,10 +940,20 @@ func (h *Host) Close() {
 		if err := h.usage.SaveNow(); err != nil {
 			slog.Warn("usage 退出前落盘失败", "module", "usage", "err", err)
 		}
-		close(h.done)
-		close(h.events)
-		close(h.streamCh)
+		h.closeOutputChannels()
+		if err := h.bookLease.Close(); err != nil {
+			slog.Error("释放小说目录占用失败", "module", "host", "dir", h.cfg.OutputDir, "err", err)
+		}
+		if h.logCleanup != nil {
+			h.logCleanup()
+			h.logCleanup = nil
+		}
 	})
+}
+
+// FileLogError 返回构造阶段的文件日志初始化错误；Host 生命周期内不会变化。
+func (h *Host) FileLogError() error {
+	return h.fileLogErr
 }
 
 // runEnded 引擎循环结束(任何原因)时由 engine.onDone 回调:按 store 事实定终态。
@@ -900,16 +977,38 @@ func (h *Host) runEnded() {
 		}
 		return
 	}
+	book, err := h.store.Book.Load()
+	if err != nil {
+		h.lifecycle = lifecycleIdle
+		h.mu.Unlock()
+		h.emitEvent(Event{Time: time.Now(), Category: "ERROR", Level: "error",
+			Summary: "引擎结束时读取作品信息失败: " + err.Error()})
+		select {
+		case h.done <- struct{}{}:
+		default:
+		}
+		return
+	}
 	if progress != nil && progress.Phase == domain.PhaseComplete {
+		if book == nil {
+			h.lifecycle = lifecycleIdle
+			h.mu.Unlock()
+			h.emitEvent(Event{Time: time.Now(), Category: "ERROR", Level: "error",
+				Summary: "引擎结束时作品信息不存在"})
+			select {
+			case h.done <- struct{}{}:
+			default:
+			}
+			return
+		}
 		h.lifecycle = lifecycleCompleted
 		// 完本收尾:确定性生成(store 已有全部事实,不花 LLM 调用;RFC 末节)。
-		summary := completionSummary(h.store)
+		summary := completionSummary(*progress, *book)
 		h.mu.Unlock()
-		slog.Info(summary, "module", "host")
 		h.emitEvent(Event{Time: time.Now(), Category: "SYSTEM", Summary: summary, Level: "success"})
 		h.notifier.Send(notify.Notification{
 			Kind: notify.KindRunEnd, Level: "info", Title: "ainovel: 创作完成",
-			Body: h.runEndBody(progress.NovelName, summary),
+			Body: h.runEndBody("", summary),
 		})
 	} else {
 		wasRunning := h.lifecycle == lifecycleRunning
@@ -917,19 +1016,20 @@ func (h *Host) runEnded() {
 			h.lifecycle = lifecycleIdle
 		}
 		completed := 0
-		name := ""
+		title := ""
 		if progress != nil {
 			completed = len(progress.CompletedChapters)
-			name = progress.NovelName
+		}
+		if book != nil {
+			title = book.Title
 		}
 		h.mu.Unlock()
 		if wasRunning {
 			summary := fmt.Sprintf(i18n.T("host.event.engine_stopped"), completed)
-			slog.Warn(summary, "module", "host")
 			h.emitEvent(Event{Time: time.Now(), Category: "SYSTEM", Summary: summary, Level: "warn"})
 			h.notifier.Send(notify.Notification{
 				Kind: notify.KindRunEnd, Level: "warn", Title: i18n.T("host.event.run_end_title"),
-				Body: h.runEndBody(name, summary),
+				Body: h.runEndBody(title, summary),
 			})
 		}
 	}
@@ -941,8 +1041,8 @@ func (h *Host) runEnded() {
 }
 
 // runEndBody 组装 run_end 通知正文：书名 + 进度摘要 + 累计花费。
-func (h *Host) runEndBody(novelName, summary string) string {
-	if name := strings.TrimSpace(novelName); name != "" {
+func (h *Host) runEndBody(title, summary string) string {
+	if name := strings.TrimSpace(title); name != "" {
 		summary = fmt.Sprintf(i18n.T("host.event.novel_wrap"), name) + summary
 	}
 	cost, _, _, _, _ := h.usage.Totals()
@@ -958,41 +1058,21 @@ func (h *Host) runEndBody(novelName, summary string) string {
 // 不再用独立 clearCh —— 双通道无序导致 ✻ header 时常落到上一个 round 末尾。
 const StreamClearSentinel = "\x00\x00CLEAR\x00\x00"
 
-func (h *Host) Events() <-chan Event        { return h.events }
-func (h *Host) Stream() <-chan string       { return h.streamCh }
-func (h *Host) Done() <-chan struct{}       { return h.done }
-func (h *Host) Dir() string                 { return h.store.Dir() }
-func (h *Host) AskUser() *tools.AskUserTool { return h.askUser }
+func (h *Host) Events() <-chan Event  { return h.events }
+func (h *Host) Stream() <-chan string { return h.streamCh }
+func (h *Host) Done() <-chan struct{} { return h.done }
+func (h *Host) Dir() string           { return h.store.Dir() }
 
 // ── 事件发射 ──
 
 func (h *Host) emitEvent(ev Event) {
-	// 退出期 Close() 可能已 close(h.events)，此时并发 emit 的通道发送会 panic
-	// （select/default 挡不住关通道发送）。emitEvent 是所有事件的唯一漏斗，在此兜住
-	// 竞态即可覆盖引擎/asyncWG 之外的同步 emit 者（Abort/abortWithEvent、预算哨兵等）。
-	defer func() { recover() }()
-	// 所有事件的唯一 slog 入口。observer 翻译的 agentcore 事件和 Host 自发的
-	// SYSTEM 事件（Start/Abort/Resume…）都在这里落日志，避免 ESC abort 与外部
-	// 终止在 tui.log 上无法区分。
-	if ev.Summary != "" || ev.Detail != "" {
-		level := slog.LevelInfo
-		switch ev.Level {
-		case "warn":
-			level = slog.LevelWarn
-		case "error":
-			level = slog.LevelError
-		}
-		// 日志记完整 Detail（排查用，不截断）；Detail 为空才回退到 Summary。
-		msg := ev.Detail
-		if msg == "" {
-			msg = ev.Summary
-		}
-		attrs := []any{"module", "event", "category", ev.Category, "agent", ev.Agent}
-		if ev.Kind != "" {
-			attrs = append(attrs, "kind", ev.Kind)
-		}
-		slog.Log(context.Background(), level, msg, attrs...)
+	h.outputMu.RLock()
+	defer h.outputMu.RUnlock()
+	if h.outputClosed {
+		return
 	}
+	// 读锁保证关闭前的事件完整写完；关闭后的事件直接拒绝。
+	LogEvent(ev)
 	select {
 	case h.events <- ev:
 	default:
@@ -1008,8 +1088,11 @@ func (h *Host) emitEvent(ev Event) {
 }
 
 func (h *Host) emitDelta(delta string) {
-	// 同 emitEvent：兜住退出期 h.streamCh 已 close 时的并发发送竞态。
-	defer func() { recover() }()
+	h.outputMu.RLock()
+	defer h.outputMu.RUnlock()
+	if h.outputClosed {
+		return
+	}
 	select {
 	case h.streamCh <- delta:
 	default:
@@ -1022,6 +1105,18 @@ func (h *Host) emitDelta(delta string) {
 		default:
 		}
 	}
+}
+
+func (h *Host) closeOutputChannels() {
+	h.outputMu.Lock()
+	defer h.outputMu.Unlock()
+	if h.outputClosed {
+		return
+	}
+	h.outputClosed = true
+	close(h.done)
+	close(h.events)
+	close(h.streamCh)
 }
 
 func (h *Host) emitClear() {
@@ -1102,9 +1197,12 @@ func (h *Host) Snapshot() UISnapshot {
 		MissingAssistantUsage:  h.usage.MissingAssistantUsage(),
 	}
 
+	if book, _ := h.store.Book.Load(); book != nil {
+		snap.BookTitle = book.Title
+		snap.Synopsis = truncate(book.Synopsis, 200)
+	}
 	progress, _ := h.store.Progress.Load()
 	if progress != nil {
-		snap.NovelName = strings.TrimSpace(progress.NovelName)
 		snap.Phase = string(progress.Phase)
 		snap.Flow = string(progress.Flow)
 		snap.CurrentChapter = progress.CurrentChapter
@@ -1119,11 +1217,6 @@ func (h *Host) Snapshot() UISnapshot {
 			snap.CurrentVolumeArc = fmt.Sprintf(i18n.T("host.snap.volume_arc"), progress.CurrentVolume, progress.CurrentArc)
 		}
 	}
-	if snap.NovelName == "" {
-		if premise, _ := h.store.Outline.LoadPremise(); premise != "" {
-			snap.NovelName = domain.ExtractNovelNameFromPremise(premise)
-		}
-	}
 	if meta, _ := h.store.RunMeta.Load(); meta != nil {
 		snap.PendingSteer = meta.PendingSteer
 		snap.AdvanceMode = string(meta.AdvanceMode)
@@ -1135,10 +1228,8 @@ func (h *Host) Snapshot() UISnapshot {
 	}
 
 	snap.Agents = h.observer.agentSnapshots()
-	h.fillContextStatus(&snap)
 	snap.StatusLabel = deriveStatusLabel(snap)
 
-	// 恢复标签
 	// 恢复标签
 	if label, err := resumeLabel(h.store); err == nil && label != "" {
 		snap.RecoveryLabel = label
@@ -1148,12 +1239,6 @@ func (h *Host) Snapshot() UISnapshot {
 
 	return snap
 }
-
-// fillContextStatus 填充上下文健康度信息。
-// 主循环无常驻 LLM 上下文；Worker 的上下文健康度经进度中继
-// (ProgressContext)进入 observer 的 per-agent 快照,由 Agents 面板展示。
-// 汇总字段留空,面板按 per-agent 数据渲染。
-func (h *Host) fillContextStatus(_ *UISnapshot) {}
 
 // fillDetails 填充详情区:设定、角色、最近 commit/review/摘要。
 func (h *Host) fillDetails(snap *UISnapshot, progress *domain.Progress) {
@@ -1171,11 +1256,11 @@ func (h *Host) fillDetails(snap *UISnapshot, progress *domain.Progress) {
 		for _, e := range outline {
 			title := e.Title
 			if _, ok := completed[e.Chapter]; ok {
-				summary, err := h.store.Summaries.LoadSummary(e.Chapter)
+				committedTitle, err := h.store.Summaries.LoadSummaryTitle(e.Chapter)
 				if err != nil {
 					slog.Warn("章节标题投影失败", "module", "host.snapshot", "chapter", e.Chapter, "err", err)
-				} else if summary != nil && strings.TrimSpace(summary.Title) != "" {
-					title = summary.Title
+				} else if strings.TrimSpace(committedTitle) != "" {
+					title = committedTitle
 				}
 			}
 			snap.Outline = append(snap.Outline, OutlineSnapshot{
@@ -1548,6 +1633,72 @@ func (h *Host) refreshWriterRestore() {
 	}
 }
 
+func (h *Host) CheckChapterRevisions() ([]int, error) {
+	pending, err := h.store.Revisions.LoadPending()
+	if err != nil {
+		return nil, fmt.Errorf(i18n.T("host.err.read_revision_pending"), err)
+	}
+	if pending != nil {
+		chapters := make([]int, 0, len(pending.Items))
+		for _, item := range pending.Items {
+			chapters = append(chapters, item.Chapter)
+		}
+		return chapters, nil
+	}
+	changes, err := revision.Scan(h.store)
+	if err != nil {
+		return nil, err
+	}
+	return revision.ChangedChapters(changes), nil
+}
+
+func (h *Host) SyncChapterRevisions(ctx context.Context) (*revision.Result, error) {
+	if err := h.acquireExclusive(i18n.T("host.action.sync_revision")); err != nil {
+		return nil, err
+	}
+	ctx, cancel := context.WithCancel(ctx)
+	h.mu.Lock()
+	h.exclusiveCancel = cancel
+	h.mu.Unlock()
+	defer h.releaseExclusive()
+
+	pending, err := h.store.Revisions.LoadPending()
+	if err != nil {
+		return nil, err
+	}
+	if pending == nil {
+		changes, err := revision.Scan(h.store)
+		if err != nil {
+			return nil, err
+		}
+		if len(changes) == 0 {
+			return &revision.Result{}, nil
+		}
+		if err := h.budget.Refuse(); err != nil {
+			return nil, err
+		}
+	}
+	model := h.models.ForRoleWithFailover("editor", func(ev bootstrap.FailoverEvent) {
+		slog.Warn("章节修订 provider 切换", "module", "revision", "role", ev.Role,
+			"reason", ev.Reason, "from", fmt.Sprintf("%s/%s", ev.FromProvider, ev.FromModel),
+			"to", fmt.Sprintf("%s/%s", ev.ToProvider, ev.ToModel), "err", ev.Err)
+	})
+	model = newUsageTrackedModel(model, "editor", h.usage.Record)
+	service := revision.NewService(h.store, model, h.bundle.Prompts.RevisionAnalyze, h.styleStats)
+	return service.Sync(ctx)
+}
+
+func (h *Host) requireCleanChapters() error {
+	chapters, err := h.CheckChapterRevisions()
+	if err != nil {
+		return fmt.Errorf(i18n.T("host.err.check_external_revision"), err)
+	}
+	if len(chapters) > 0 {
+		return fmt.Errorf(i18n.T("host.err.external_revision_detected"), chapters)
+	}
+	return nil
+}
+
 func truncate(s string, maxRunes int) string {
 	runes := []rune(s)
 	if len(runes) <= maxRunes {
@@ -1578,7 +1729,7 @@ func (h *Host) ImportFrom(ctx context.Context, opts imp.Options) (<-chan imp.Eve
 
 	deps := imp.Deps{
 		Store:         h.store,
-		CommitChapter: tools.NewCommitChapterTool(h.store),
+		CommitChapter: tools.NewCommitChapterTool(h.store, h.styleStats),
 		Segment:       h.importCaller("segment"),
 		Analyze:       h.importCaller("analyze"),
 		Synthesize:    h.importCaller("synthesize"),
@@ -1693,7 +1844,7 @@ func (h *Host) ImportSimulationProfile(ctx context.Context, path string) (<-chan
 	return superviseExclusive(h, ch), nil
 }
 
-// acquireExclusive 原子占用后台独占作业槽（import/simulate）：Engine 运行中、阶段共创窗口内、
+// acquireExclusive 原子占用后台独占作业槽（import/simulate/revision）：Engine 运行中、阶段共创窗口内、
 // 或已有独占作业在跑时拒绝。成功即登记占用，作业结束须调 releaseExclusive 释放——否则两个导入
 // 或导入+仿写会并发抢改同一状态。补上此前只查 ==running/cocreating、不登记作业本身的缺口。
 func (h *Host) acquireExclusive(action string) error {
@@ -1819,7 +1970,6 @@ func (h *Host) continueAfterImport(opts imp.Options) bool {
 	if !want {
 		in, err := imp.OpenWorkspace(h.store.Dir()).LoadIntent()
 		if err != nil {
-			slog.Warn("导入自动接力读取 Intent 失败", "module", "host", "err", err)
 			h.emitEvent(Event{Time: time.Now(), Category: "SYSTEM", Level: "warn",
 				Summary: fmt.Sprintf(i18n.T("host.event.import_resume_intent_err"), err.Error())})
 		} else if in != nil {

@@ -71,14 +71,23 @@ func (t *SaveFoundationTool) Execute(_ context.Context, args json.RawMessage) (j
 
 	result := map[string]any{"saved": true, "type": a.Type, "scale": a.Scale}
 
-	// 写作阶段禁止全量覆盖大纲，只允许增量操作（expand_arc / append_volume）
-	writing, err := t.isWriting()
+	// 全量大纲只属于规划期。写作期必须用受保护的增量操作，完结后必须先重开；
+	// 否则会绕过已完成章节保护，破坏 Progress 与章节事实的一致性。
+	progress, err := t.store.Progress.Load()
 	if err != nil {
-		return nil, fmt.Errorf("check writing phase: %w: %w", errs.ErrStoreRead, err)
+		return nil, fmt.Errorf("check foundation phase: %w: %w", errs.ErrStoreRead, err)
 	}
-	if (a.Type == "outline" || a.Type == "layered_outline") && writing {
-		return nil, fmt.Errorf(
-			"写作阶段禁止使用 %s 全量覆盖大纲。请使用 expand_arc 展开骨架弧，或 append_volume 追加新卷: %w", a.Type, errs.ErrToolPrecondition)
+	if (a.Type == "outline" || a.Type == "layered_outline") && progress != nil {
+		switch progress.Phase {
+		case domain.PhaseWriting:
+			return nil, fmt.Errorf(
+				"写作阶段禁止使用 %s 全量覆盖大纲。请使用 revise_outline 修订未发生章节、expand_arc 展开骨架弧，或 append_volume 追加新卷: %w",
+				a.Type, errs.ErrToolPrecondition)
+		case domain.PhaseComplete:
+			return nil, fmt.Errorf(
+				"全书已完结，禁止使用 %s 全量覆盖大纲。请先重开作品，再使用受保护的大纲修订或续写操作: %w",
+				a.Type, errs.ErrToolPrecondition)
+		}
 	}
 	if a.Scale != "" {
 		if err := t.store.RunMeta.SetPlanningTier(domain.PlanningTier(a.Scale)); err != nil {
@@ -100,10 +109,18 @@ func (t *SaveFoundationTool) Execute(_ context.Context, args json.RawMessage) (j
 			return nil, fmt.Errorf("load progress for volume-end facts: %w: %w", errs.ErrStoreRead, err)
 		}
 		if p != nil {
-			volumeEndFacts, err = json.Marshal(map[string]any{
-				"completed_chapters": len(p.CompletedChapters),
-				"total_chapters":     p.TotalChapters,
-			})
+			facts := map[string]any{"completed_chapters": len(p.CompletedChapters)}
+			if p.Layered {
+				outline, outlineErr := t.store.Outline.LoadOutline()
+				if outlineErr != nil {
+					return nil, fmt.Errorf("load outlined chapters for volume-end facts: %w: %w", errs.ErrStoreRead, outlineErr)
+				}
+				facts["dynamic_planning"] = true
+				facts["outlined_chapters"] = len(outline)
+			} else {
+				facts["total_chapters"] = p.TotalChapters
+			}
+			volumeEndFacts, err = json.Marshal(facts)
 			if err != nil {
 				return nil, fmt.Errorf("marshal volume-end facts: %w", err)
 			}
@@ -116,17 +133,10 @@ func (t *SaveFoundationTool) Execute(_ context.Context, args json.RawMessage) (j
 
 	switch a.Type {
 	case "premise":
-		name := domain.ExtractNovelNameFromPremise(content)
 		if err := t.store.Outline.SavePremise(content); err != nil {
 			return nil, fmt.Errorf("save premise: %w: %w", errs.ErrStoreWrite, err)
 		}
-		if name != "" {
-			if err := t.store.Progress.SetNovelName(name); err != nil {
-				return nil, fmt.Errorf("save novel name: %w: %w", errs.ErrStoreWrite, err)
-			}
-			result["novel_name"] = name
-		}
-		if err := t.store.Progress.UpdatePhase(domain.PhasePremise); err != nil {
+		if err := t.store.Progress.AdvancePhase(domain.PhasePremise); err != nil {
 			return nil, fmt.Errorf("update premise phase: %w: %w", errs.ErrStoreWrite, err)
 		}
 
@@ -138,7 +148,7 @@ func (t *SaveFoundationTool) Execute(_ context.Context, args json.RawMessage) (j
 		if err := t.store.Outline.SaveOutline(entries); err != nil {
 			return nil, fmt.Errorf("save outline: %w: %w", errs.ErrStoreWrite, err)
 		}
-		if err := t.store.Progress.UpdatePhase(domain.PhaseOutline); err != nil {
+		if err := t.store.Progress.AdvancePhase(domain.PhaseOutline); err != nil {
 			return nil, fmt.Errorf("update outline phase: %w: %w", errs.ErrStoreWrite, err)
 		}
 		if err := t.store.Progress.SetTotalChapters(len(entries)); err != nil {
@@ -165,12 +175,8 @@ func (t *SaveFoundationTool) Execute(_ context.Context, args json.RawMessage) (j
 		if err := t.store.Outline.SaveLayeredOutline(volumes); err != nil {
 			return nil, fmt.Errorf("save layered_outline: %w: %w", errs.ErrStoreWrite, err)
 		}
-		flat := domain.FlattenOutline(volumes)
-		if err := t.store.Outline.SaveOutline(flat); err != nil {
-			return nil, fmt.Errorf("save flattened outline: %w: %w", errs.ErrStoreWrite, err)
-		}
-		total := domain.TotalChapters(volumes)
-		if err := t.store.Progress.UpdatePhase(domain.PhaseOutline); err != nil {
+		total := domain.EstimatedChapterCapacity(volumes)
+		if err := t.store.Progress.AdvancePhase(domain.PhaseOutline); err != nil {
 			return nil, fmt.Errorf("update outline phase: %w: %w", errs.ErrStoreWrite, err)
 		}
 		if err := t.store.Progress.SetTotalChapters(total); err != nil {
@@ -185,7 +191,8 @@ func (t *SaveFoundationTool) Execute(_ context.Context, args json.RawMessage) (j
 			}
 		}
 		result["volumes"] = len(volumes)
-		result["chapters"] = total
+		result["dynamic_planning"] = true
+		result["outlined_chapters"] = len(domain.FlattenOutline(volumes))
 
 	case "characters":
 		var chars []domain.Character
@@ -223,7 +230,9 @@ func (t *SaveFoundationTool) Execute(_ context.Context, args json.RawMessage) (j
 		result["title"] = expansion.Title
 		result["goal"] = expansion.Goal
 		result["chapters"] = len(expansion.Chapters)
-		t.consumeWriterFeedback()
+		if err := t.consumeWriterFeedback(); err != nil {
+			return nil, err
+		}
 
 	case "append_volume":
 		p, err := t.store.Progress.Load()
@@ -259,7 +268,9 @@ func (t *SaveFoundationTool) Execute(_ context.Context, args json.RawMessage) (j
 		if chCount > 0 {
 			result["chapters"] = chCount
 		}
-		t.consumeWriterFeedback()
+		if err := t.consumeWriterFeedback(); err != nil {
+			return nil, err
+		}
 
 	case "complete_book":
 		// 全书完结的唯一入口：直接推 Phase=Complete。
@@ -284,7 +295,16 @@ func (t *SaveFoundationTool) Execute(_ context.Context, args json.RawMessage) (j
 		if len(progress.CompletedChapters) == 0 {
 			return nil, fmt.Errorf("一章未写不可完本;规划完成后写作由系统自动推进,无需调用 complete_book: %w", errs.ErrToolPrecondition)
 		}
-		if next := progress.NextChapter(); progress.TotalChapters > 0 && next <= progress.TotalChapters {
+		next := progress.NextChapter()
+		if progress.Layered {
+			outline, outlineErr := t.store.Outline.LoadOutline()
+			if outlineErr != nil {
+				return nil, fmt.Errorf("load outlined chapters: %w: %w", errs.ErrStoreRead, outlineErr)
+			}
+			if next <= len(outline) {
+				return nil, fmt.Errorf("当前详细大纲还有未写章节（下一章 %d/当前已细化 %d），不可完本；想提前收束请改用 append_volume 且卷 JSON 顶层带 \"final\": true 宣告收官卷: %w", next, len(outline), errs.ErrToolPrecondition)
+			}
+		} else if progress.TotalChapters > 0 && next <= progress.TotalChapters {
 			return nil, fmt.Errorf("大纲内还有未写章节（下一章 %d/共 %d），不可完本；想提前收束请改用 append_volume 且卷 JSON 顶层带 \"final\": true 宣告收官卷: %w", next, progress.TotalChapters, errs.ErrToolPrecondition)
 		}
 		// 活跃长线未收束不可完本——OpenThreads 的字段契约即"需收束才能结局"。这不是
@@ -324,7 +344,9 @@ func (t *SaveFoundationTool) Execute(_ context.Context, args json.RawMessage) (j
 		}
 		result["ending_direction"] = compass.EndingDirection
 		result["last_updated"] = compass.LastUpdated
-		t.consumeWriterFeedback()
+		if err := t.consumeWriterFeedback(); err != nil {
+			return nil, err
+		}
 
 	default:
 		return nil, fmt.Errorf("unknown type %q, expected premise/outline/layered_outline/characters/world_rules/expand_arc/append_volume/update_compass/complete_book: %w", a.Type, errs.ErrToolArgs)
@@ -428,14 +450,6 @@ func normalizeFoundationContent(raw json.RawMessage) (string, error) {
 	return string(raw), nil
 }
 
-func (t *SaveFoundationTool) isWriting() (bool, error) {
-	p, err := t.store.Progress.Load()
-	if err != nil {
-		return false, err
-	}
-	return p != nil && p.Phase == domain.PhaseWriting, nil
-}
-
 // recordVolumeEndDecision 把卷末三选一（续卷/收官/完结）的判定理由落进裁定审计。
 // best-effort：结构变更已落盘，审计失败只告警不回滚——报错会让模型重试已完成
 // 的操作（重复追加卷）。
@@ -463,10 +477,10 @@ func (t *SaveFoundationTool) recordVolumeEndDecision(action, reason string, fact
 	}
 }
 
-// consumeWriterFeedback 结构操作(expand_arc/append_volume/update_compass)成功
-// 即视为反馈池已被参考,清空防止陈旧反馈反复影响后续规划。best-effort。
-func (t *SaveFoundationTool) consumeWriterFeedback() {
+// consumeWriterFeedback 在结构操作成功后清除已处理的规划反馈。
+func (t *SaveFoundationTool) consumeWriterFeedback() error {
 	if err := t.store.Outline.ClearOutlineFeedback(); err != nil {
-		slog.Warn("清空 writer 反馈池失败", "module", "tools", "err", err)
+		return fmt.Errorf("clear outline feedback: %w: %w", errs.ErrStoreWrite, err)
 	}
+	return nil
 }

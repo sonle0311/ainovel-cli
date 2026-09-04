@@ -14,6 +14,41 @@ import (
 	"github.com/voocel/ainovel-cli/internal/store"
 )
 
+func newTestContextTool(st *store.Store, refs References, style string) *ContextTool {
+	return NewContextTool(st, refs, style, NewStyleStatsIndex(st))
+}
+
+func TestBuildProgressStatusHidesLayeredCapacityEstimate(t *testing.T) {
+	st := store.NewStore(t.TempDir())
+	if err := st.Init(); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Progress.Save(&domain.Progress{TotalChapters: 66, Layered: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Outline.SaveLayeredOutline([]domain.VolumeOutline{{
+		Index: 1, Arcs: []domain.ArcOutline{
+			{Index: 1, Chapters: []domain.OutlineEntry{{Title: "一"}, {Title: "二"}}},
+			{Index: 2, EstimatedChapters: 64},
+		},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+
+	result := map[string]any{}
+	newTestContextTool(st, References{}, "default").buildProgressStatus(result, &contextReads{})
+	status, ok := result["progress_status"].(map[string]any)
+	if !ok {
+		t.Fatalf("progress_status = %#v", result["progress_status"])
+	}
+	if status["dynamic_planning"] != true || status["outlined_chapters"] != 2 {
+		t.Fatalf("动态规划进度错误: %#v", status)
+	}
+	if _, exists := status["total_chapters"]; exists {
+		t.Fatalf("分层容量估算不得作为 total_chapters 暴露: %#v", status)
+	}
+}
+
 func TestContextToolInjectsStyleStats(t *testing.T) {
 	dir := t.TempDir()
 	st := store.NewStore(dir)
@@ -33,7 +68,7 @@ func TestContextToolInjectsStyleStats(t *testing.T) {
 		t.Fatalf("Save progress: %v", err)
 	}
 
-	tool := NewContextTool(st, References{}, "default")
+	tool := newTestContextTool(st, References{}, "default")
 	args, _ := json.Marshal(map[string]any{"chapter": 7})
 	raw, err := tool.Execute(context.Background(), args)
 	if err != nil {
@@ -68,16 +103,16 @@ func TestContextToolInjectsStyleStats(t *testing.T) {
 	}
 }
 
-func TestContextToolWarnsWhenUserRulesSnapshotIsCorrupt(t *testing.T) {
+func TestContextToolWarnsWhenOptionalDataIsCorrupt(t *testing.T) {
 	dir := t.TempDir()
 	st := store.NewStore(dir)
 	if err := st.Init(); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "meta", "user_rules.json"), []byte("{"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "meta", "simulation_profile.json"), []byte("{"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	raw, err := NewContextTool(st, References{}, "default").Execute(context.Background(), json.RawMessage(`{}`))
+	raw, err := newTestContextTool(st, References{}, "default").Execute(context.Background(), json.RawMessage(`{}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -86,12 +121,8 @@ func TestContextToolWarnsWhenUserRulesSnapshotIsCorrupt(t *testing.T) {
 		t.Fatal(err)
 	}
 	warnings, _ := got["_warnings"].([]any)
-	if len(warnings) == 0 || !strings.Contains(warnings[0].(string), "user_rules") {
-		t.Fatalf("损坏快照必须显式告警: %+v", got["_warnings"])
-	}
-	working, _ := got["working_memory"].(map[string]any)
-	if working["user_rules"] == nil {
-		t.Fatal("告警后仍应提供系统默认规则供模型继续决策")
+	if len(warnings) == 0 || !strings.Contains(warnings[0].(string), "simulation_profile") {
+		t.Fatalf("可选资料损坏必须显式告警: %+v", got["_warnings"])
 	}
 }
 
@@ -103,59 +134,27 @@ func keysOf(m map[string]json.RawMessage) []string {
 	return keys
 }
 
-func TestContextToolReportsWarningsForCorruptedState(t *testing.T) {
+func TestContextToolRejectsCorruptCoreState(t *testing.T) {
 	dir := t.TempDir()
 	store := store.NewStore(dir)
 	if err := store.Init(); err != nil {
 		t.Fatalf("Init: %v", err)
 	}
 
-	if err := os.WriteFile(filepath.Join(dir, "outline.json"), []byte("{invalid"), 0o644); err != nil {
-		t.Fatalf("write outline.json: %v", err)
-	}
 	if err := os.WriteFile(filepath.Join(dir, "meta", "progress.json"), []byte("{invalid"), 0o644); err != nil {
 		t.Fatalf("write progress.json: %v", err)
 	}
 
-	tool := NewContextTool(store, References{}, "default")
+	tool := newTestContextTool(store, References{}, "default")
 	args, err := json.Marshal(map[string]any{"chapter": 2})
 	if err != nil {
 		t.Fatalf("Marshal: %v", err)
 	}
 
-	result, err := tool.Execute(context.Background(), args)
-	if err != nil {
-		t.Fatalf("Execute: %v", err)
+	_, err = tool.Execute(context.Background(), args)
+	if err == nil || !strings.Contains(err.Error(), "progress") {
+		t.Fatalf("核心事实损坏必须终止上下文装配: %v", err)
 	}
-
-	var payload struct {
-		Warnings []string `json:"_warnings"`
-		Summary  string   `json:"_loading_summary"`
-	}
-	if err := json.Unmarshal(result, &payload); err != nil {
-		t.Fatalf("Unmarshal: %v", err)
-	}
-	if len(payload.Warnings) == 0 {
-		t.Fatal("expected context warnings for corrupted files")
-	}
-	if !containsWarning(payload.Warnings, "outline") {
-		t.Fatalf("expected outline warning, got %v", payload.Warnings)
-	}
-	if !containsWarning(payload.Warnings, "progress") {
-		t.Fatalf("expected progress warning, got %v", payload.Warnings)
-	}
-	if !strings.Contains(payload.Summary, "告警:") {
-		t.Fatalf("expected loading summary to contain warning count, got %q", payload.Summary)
-	}
-}
-
-func containsWarning(warnings []string, key string) bool {
-	for _, warning := range warnings {
-		if strings.Contains(warning, key) {
-			return true
-		}
-	}
-	return false
 }
 
 func TestContextToolChapterModeIncludesWorkingAndReferenceFields(t *testing.T) {
@@ -215,7 +214,7 @@ func TestContextToolChapterModeIncludesWorkingAndReferenceFields(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("SaveWorldRules: %v", err)
 	}
-	if err := s.Progress.Init("test", 2); err != nil {
+	if err := s.Progress.Init(2); err != nil {
 		t.Fatalf("InitProgress: %v", err)
 	}
 	if err := s.Summaries.SaveSummary(domain.ChapterSummary{
@@ -253,7 +252,7 @@ func TestContextToolChapterModeIncludesWorkingAndReferenceFields(t *testing.T) {
 		t.Fatalf("SetPlanningTier: %v", err)
 	}
 
-	tool := NewContextTool(s, References{
+	tool := newTestContextTool(s, References{
 		Consistency:      "一致性检查",
 		HookTechniques:   "钩子技巧",
 		QualityChecklist: "质量清单",
@@ -277,23 +276,38 @@ func TestContextToolChapterModeIncludesWorkingAndReferenceFields(t *testing.T) {
 		"premise",
 		"premise_sections",
 		"premise_structure",
-		"outline",
 		"world_rules",
 		"memory_policy",
-		"planning_tier",
 		"working_memory",
 		"episodic_memory",
 		"reference_pack",
-		"current_chapter_outline",
-		"recent_summaries",
-		"chapter_plan",
-		"chapter_contract",
-		"previous_tail",
-		"style_rules",
-		"references",
 	} {
 		if _, ok := payload[key]; !ok {
 			t.Fatalf("expected key %q in chapter context", key)
+		}
+	}
+	if _, ok := payload["outline"]; ok {
+		t.Fatal("chapter context must not include the whole outline")
+	}
+	working := payload["working_memory"].(map[string]any)
+	for _, key := range []string{"current_chapter_outline", "recent_summaries", "chapter_plan", "chapter_contract", "previous_tail"} {
+		if _, ok := working[key]; !ok {
+			t.Fatalf("expected working_memory.%s", key)
+		}
+	}
+	episodic := payload["episodic_memory"].(map[string]any)
+	if _, ok := episodic["planning_tier"]; !ok {
+		t.Fatal("expected episodic_memory.planning_tier")
+	}
+	referencePack := payload["reference_pack"].(map[string]any)
+	for _, key := range []string{"style_rules", "references"} {
+		if _, ok := referencePack[key]; !ok {
+			t.Fatalf("expected reference_pack.%s", key)
+		}
+	}
+	for _, key := range []string{"planning_tier", "current_chapter_outline", "recent_summaries", "chapter_plan", "chapter_contract", "previous_tail", "style_rules", "references"} {
+		if _, ok := payload[key]; ok {
+			t.Fatalf("unexpected top-level memory field %q", key)
 		}
 	}
 }
@@ -304,7 +318,7 @@ func TestContextToolArchitectModeIncludesPlanningAndFoundation(t *testing.T) {
 	if err := s.Init(); err != nil {
 		t.Fatalf("Init: %v", err)
 	}
-	if err := s.Progress.Init("test", 6); err != nil {
+	if err := s.Progress.Init(6); err != nil {
 		t.Fatalf("InitProgress: %v", err)
 	}
 	if err := s.Progress.SetLayered(true); err != nil {
@@ -405,7 +419,7 @@ func TestContextToolArchitectModeIncludesPlanningAndFoundation(t *testing.T) {
 		t.Fatalf("SetPlanningTier: %v", err)
 	}
 
-	tool := NewContextTool(s, References{
+	tool := newTestContextTool(s, References{
 		OutlineTemplate:   "大纲模板",
 		CharacterTemplate: "角色模板",
 		LongformPlanning:  "长篇规划",
@@ -425,55 +439,280 @@ func TestContextToolArchitectModeIncludesPlanningAndFoundation(t *testing.T) {
 		t.Fatalf("Unmarshal: %v", err)
 	}
 
-	for _, key := range []string{
-		"memory_policy",
-		"planning_tier",
-		"planning_memory",
-		"foundation_memory",
-		"reference_pack",
-		"premise_sections",
-		"premise_structure",
-		"characters",
-		"layered_outline",
-		"skeleton_arcs",
-		"arc_summaries",
-		"compass",
-		"style_rules",
-		"references",
-		"foundation_status",
-	} {
+	for _, key := range []string{"memory_policy", "planning_memory", "foundation_memory", "reference_pack"} {
 		if _, ok := payload[key]; !ok {
 			t.Fatalf("expected key %q in architect context", key)
 		}
 	}
+	planning := payload["planning_memory"].(map[string]any)
+	for _, key := range []string{"planning_tier", "layered_outline", "skeleton_arcs", "arc_summaries", "compass"} {
+		if _, ok := planning[key]; !ok {
+			t.Fatalf("expected planning_memory.%s", key)
+		}
+	}
+	foundation := payload["foundation_memory"].(map[string]any)
+	for _, key := range []string{"premise", "premise_sections", "premise_structure", "characters", "foundation_status"} {
+		if _, ok := foundation[key]; !ok {
+			t.Fatalf("expected foundation_memory.%s", key)
+		}
+	}
+	referencePack := payload["reference_pack"].(map[string]any)
+	for _, key := range []string{"style_rules", "references"} {
+		if _, ok := referencePack[key]; !ok {
+			t.Fatalf("expected reference_pack.%s", key)
+		}
+	}
+	for _, key := range []string{"planning_tier", "layered_outline", "skeleton_arcs", "arc_summaries", "compass", "premise", "premise_sections", "premise_structure", "characters", "foundation_status", "style_rules", "references"} {
+		if _, ok := payload[key]; ok {
+			t.Fatalf("unexpected top-level memory field %q", key)
+		}
+	}
 }
 
-func TestTrimByBudgetRemovesMirroredMemoryKeys(t *testing.T) {
-	result := map[string]any{
-		"references": map[string]string{
-			"a": strings.Repeat("x", 200),
-			"b": strings.Repeat("y", 200),
-		},
-		"reference_pack": map[string]any{
-			"references": map[string]string{
-				"a": strings.Repeat("x", 200),
-				"b": strings.Repeat("y", 200),
-			},
-			"style_rules": []string{"克制"},
-		},
+func TestContextToolArchitectModeIncludesFlatOutline(t *testing.T) {
+	s := store.NewStore(t.TempDir())
+	if err := s.Init(); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Outline.SaveOutline([]domain.OutlineEntry{{Chapter: 1, Title: "开端"}}); err != nil {
+		t.Fatal(err)
 	}
 
-	trimByBudget(result, 80)
+	raw, err := newTestContextTool(s, References{}, "default").Execute(context.Background(), json.RawMessage(`{}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		t.Fatal(err)
+	}
+	planning := payload["planning_memory"].(map[string]any)
+	if _, ok := planning["outline"]; !ok {
+		t.Fatal("expected planning_memory.outline")
+	}
+	if _, ok := payload["outline"]; ok {
+		t.Fatal("unexpected top-level outline")
+	}
+}
 
-	if _, ok := result["references"]; ok {
-		t.Fatal("expected top-level references to be trimmed")
+func TestProjectLayeredOutlineKeepsOnlyFocusedArcDetails(t *testing.T) {
+	volumes := []domain.VolumeOutline{{
+		Index: 1,
+		Arcs: []domain.ArcOutline{
+			{Index: 1, Chapters: []domain.OutlineEntry{{Title: "一"}, {Title: "二"}}},
+			{Index: 2, Chapters: []domain.OutlineEntry{{Title: "三"}, {Title: "四"}}},
+		},
+	}}
+
+	projected, detailIncluded := projectLayeredOutlineForPlanning(volumes, 2, 1, 2)
+	if !detailIncluded {
+		t.Fatal("expected focused arc details")
 	}
-	pack, ok := result["reference_pack"].(map[string]any)
-	if !ok {
-		t.Fatal("expected reference_pack to remain available")
+	if got := projected[0].Arcs[0]; got.Status != "completed" || len(got.Chapters) != 0 || !got.ChaptersOmitted || got.StartChapter != 1 || got.EndChapter != 2 {
+		t.Fatalf("completed arc projection = %+v", got)
 	}
-	if _, ok := pack["references"]; ok {
-		t.Fatal("expected mirrored references to be trimmed from reference_pack")
+	if got := projected[0].Arcs[1]; got.Status != "expanded" || len(got.Chapters) != 2 || got.StartChapter != 3 || got.EndChapter != 4 {
+		t.Fatalf("future arc projection = %+v", got)
+	}
+}
+
+func TestContextToolLongLayeredPlanningProjectsFocusedArc(t *testing.T) {
+	s := store.NewStore(t.TempDir())
+	if err := s.Init(); err != nil {
+		t.Fatal(err)
+	}
+	volumes := make([]domain.VolumeOutline, 10)
+	chapter := 0
+	for vi := range volumes {
+		volumes[vi] = domain.VolumeOutline{Index: vi + 1, Title: fmt.Sprintf("卷%d", vi+1), Theme: strings.Repeat("主题", 10)}
+		for ai := 0; ai < 10; ai++ {
+			arc := domain.ArcOutline{Index: ai + 1, Title: fmt.Sprintf("弧%d", ai+1), Goal: strings.Repeat("目标", 20)}
+			for ci := 0; ci < 5; ci++ {
+				chapter++
+				arc.Chapters = append(arc.Chapters, domain.OutlineEntry{
+					Title: fmt.Sprintf("第%d章", chapter), CoreEvent: strings.Repeat("关键事件", 30),
+					Hook: strings.Repeat("悬念", 20), Scenes: []string{strings.Repeat("场景", 20)},
+				})
+			}
+			volumes[vi].Arcs = append(volumes[vi].Arcs, arc)
+		}
+	}
+	if err := s.Outline.SaveLayeredOutline(volumes); err != nil {
+		t.Fatal(err)
+	}
+	completed := make([]int, 297)
+	for i := range completed {
+		completed[i] = i + 1
+	}
+	if err := s.Progress.Save(&domain.Progress{
+		Phase: domain.PhaseWriting, Layered: true, CompletedChapters: completed,
+		CurrentVolume: 6, CurrentArc: 10,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	raw, err := newTestContextTool(s, References{}, "default").Execute(context.Background(), json.RawMessage(`{}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload struct {
+		PlanningMemory struct {
+			LayeredOutline []planningVolumeOutline `json:"layered_outline"`
+		} `json:"planning_memory"`
+	}
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		t.Fatal(err)
+	}
+	current := payload.PlanningMemory.LayeredOutline[5].Arcs[9]
+	if len(current.Chapters) != 5 {
+		t.Fatalf("current arc chapters = %d, want 5", len(current.Chapters))
+	}
+	future := payload.PlanningMemory.LayeredOutline[6].Arcs[0]
+	if len(future.Chapters) != 0 || !future.ChaptersOmitted {
+		t.Fatalf("future arc projection = %+v", future)
+	}
+
+	focusedRaw, err := newTestContextTool(s, References{}, "default").Execute(
+		context.Background(),
+		json.RawMessage(`{"volume":7,"arc":1}`),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var focusedPayload struct {
+		PlanningMemory struct {
+			LayeredOutline []planningVolumeOutline `json:"layered_outline"`
+		} `json:"planning_memory"`
+	}
+	if err := json.Unmarshal(focusedRaw, &focusedPayload); err != nil {
+		t.Fatal(err)
+	}
+	focused := focusedPayload.PlanningMemory.LayeredOutline[6].Arcs[0]
+	if len(focused.Chapters) != 5 || focused.ChaptersOmitted {
+		t.Fatalf("focused arc projection = %+v", focused)
+	}
+}
+
+func TestContextToolReadsFocusedPlanningScope(t *testing.T) {
+	s := store.NewStore(t.TempDir())
+	if err := s.Init(); err != nil {
+		t.Fatal(err)
+	}
+	tool := newTestContextTool(s, References{}, "default")
+	if _, err := tool.Execute(context.Background(), json.RawMessage(`{"volume":1}`)); err == nil || !strings.Contains(err.Error(), "provided together") {
+		t.Fatalf("expected paired planning scope error, got %v", err)
+	}
+	if err := s.Outline.SaveLayeredOutline([]domain.VolumeOutline{{Index: 1, Arcs: []domain.ArcOutline{
+		{Index: 1, Chapters: []domain.OutlineEntry{{Title: "序幕"}}},
+		{Index: 2, Title: "暗潮", Goal: "找出幕后势力", EstimatedChapters: 6},
+	}}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Progress.Save(&domain.Progress{CompletedChapters: []int{1}, CurrentVolume: 1, CurrentArc: 1}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tool.Execute(context.Background(), json.RawMessage(`{"volume":2,"arc":1}`)); err == nil || !strings.Contains(err.Error(), "not found") {
+		t.Fatalf("expected missing planning scope error, got %v", err)
+	}
+	skeletonRaw, err := tool.Execute(context.Background(), json.RawMessage(`{"volume":1,"arc":2}`))
+	if err != nil {
+		t.Fatalf("focused skeleton arc: %v", err)
+	}
+	var skeletonPayload struct {
+		PlanningMemory struct {
+			LayeredOutline []planningVolumeOutline `json:"layered_outline"`
+		} `json:"planning_memory"`
+	}
+	if err := json.Unmarshal(skeletonRaw, &skeletonPayload); err != nil {
+		t.Fatal(err)
+	}
+	prior := skeletonPayload.PlanningMemory.LayeredOutline[0].Arcs[0]
+	if len(prior.Chapters) != 0 || !prior.ChaptersOmitted {
+		t.Fatalf("unfocused prior arc = %+v", prior)
+	}
+	skeleton := skeletonPayload.PlanningMemory.LayeredOutline[0].Arcs[1]
+	if skeleton.Status != "skeleton" || skeleton.Title != "暗潮" || skeleton.Goal != "找出幕后势力" || skeleton.EstimatedChapters != 6 || len(skeleton.Chapters) != 0 {
+		t.Fatalf("focused skeleton = %+v", skeleton)
+	}
+
+	if err := s.Outline.SaveLayeredOutline([]domain.VolumeOutline{{
+		Index: 1,
+		Arcs: []domain.ArcOutline{{
+			Index:    1,
+			Chapters: []domain.OutlineEntry{{Title: "一"}, {Title: "二"}},
+		}},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Progress.Save(&domain.Progress{CompletedChapters: []int{1, 2}, CurrentVolume: 1, CurrentArc: 1}); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := tool.Execute(context.Background(), json.RawMessage(`{"volume":1,"arc":1}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload struct {
+		PlanningMemory struct {
+			LayeredOutline []planningVolumeOutline `json:"layered_outline"`
+			OutlineDetail  map[string]int          `json:"outline_detail"`
+		} `json:"planning_memory"`
+	}
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		t.Fatal(err)
+	}
+	focused := payload.PlanningMemory.LayeredOutline[0].Arcs[0]
+	if focused.Status != "completed" || len(focused.Chapters) != 2 || focused.ChaptersOmitted {
+		t.Fatalf("completed focused arc projection = %+v", focused)
+	}
+	if payload.PlanningMemory.OutlineDetail["volume"] != 1 || payload.PlanningMemory.OutlineDetail["arc"] != 1 {
+		t.Fatalf("outline detail = %+v", payload.PlanningMemory.OutlineDetail)
+	}
+
+	if err := s.Outline.ClearLayeredOutline(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tool.Execute(context.Background(), json.RawMessage(`{"volume":1,"arc":1}`)); err == nil || !strings.Contains(err.Error(), "requires a layered outline") {
+		t.Fatalf("expected flat outline planning scope error, got %v", err)
+	}
+}
+
+func TestContextToolWriterDoesNotIncludeWholeOutline(t *testing.T) {
+	s := store.NewStore(t.TempDir())
+	if err := s.Init(); err != nil {
+		t.Fatal(err)
+	}
+	outline := make([]domain.OutlineEntry, 200)
+	for i := range outline {
+		outline[i] = domain.OutlineEntry{
+			Chapter: i + 1, Title: fmt.Sprintf("第%d章", i+1),
+			CoreEvent: strings.Repeat("事件", 20), Hook: strings.Repeat("悬念", 10),
+		}
+	}
+	if err := s.Outline.SaveOutline(outline); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Progress.Save(&domain.Progress{Phase: domain.PhaseWriting, TotalChapters: 200}); err != nil {
+		t.Fatal(err)
+	}
+
+	raw, err := newTestContextTool(s, References{}, "default").Execute(context.Background(), json.RawMessage(`{"chapter":100}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := payload["outline"]; ok {
+		t.Fatal("writer payload must not include the whole outline")
+	}
+	working := payload["working_memory"].(map[string]any)
+	if _, ok := working["current_chapter_outline"]; !ok {
+		t.Fatal("writer payload must retain the current chapter outline")
+	}
+	window, ok := working["outline_window"].([]any)
+	if !ok || len(window) != domain.ReviewInterval {
+		t.Fatalf("writer outline window = %T/%d, want %d entries", working["outline_window"], len(window), domain.ReviewInterval)
 	}
 }
 
@@ -489,7 +728,7 @@ func TestContextToolSelectedMemoryRecallsStoryThreadsAndReviewLessons(t *testing
 	}); err != nil {
 		t.Fatalf("SaveOutline: %v", err)
 	}
-	if err := s.Progress.Init("test", 8); err != nil {
+	if err := s.Progress.Init(8); err != nil {
 		t.Fatalf("InitProgress: %v", err)
 	}
 	if err := s.World.SaveForeshadowLedger([]domain.ForeshadowEntry{
@@ -528,7 +767,7 @@ func TestContextToolSelectedMemoryRecallsStoryThreadsAndReviewLessons(t *testing
 		t.Fatalf("SaveReview: %v", err)
 	}
 
-	tool := NewContextTool(s, References{}, "default")
+	tool := newTestContextTool(s, References{}, "default")
 	args, err := json.Marshal(map[string]any{"chapter": 2})
 	if err != nil {
 		t.Fatalf("Marshal: %v", err)
@@ -590,7 +829,7 @@ func TestContextToolSelectedMemorySurfacesAgingForeshadow(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("SaveOutline: %v", err)
 	}
-	if err := s.Progress.Init("test", 60); err != nil {
+	if err := s.Progress.Init(60); err != nil {
 		t.Fatalf("InitProgress: %v", err)
 	}
 	// 6 条满足召回阈值；前两条账龄 ≥30（久挂），后四条账龄 <30（近期）。
@@ -605,7 +844,7 @@ func TestContextToolSelectedMemorySurfacesAgingForeshadow(t *testing.T) {
 		t.Fatalf("SaveForeshadowLedger: %v", err)
 	}
 
-	tool := NewContextTool(s, References{}, "default")
+	tool := newTestContextTool(s, References{}, "default")
 	args, err := json.Marshal(map[string]any{"chapter": 50})
 	if err != nil {
 		t.Fatalf("Marshal: %v", err)
@@ -652,7 +891,7 @@ func TestContextToolSelectedMemoryIncludesGlobalReviewLessons(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("SaveOutline: %v", err)
 	}
-	if err := s.Progress.Init("test", 6); err != nil {
+	if err := s.Progress.Init(6); err != nil {
 		t.Fatalf("InitProgress: %v", err)
 	}
 	if err := s.World.SaveReview(domain.ReviewEntry{
@@ -667,7 +906,7 @@ func TestContextToolSelectedMemoryIncludesGlobalReviewLessons(t *testing.T) {
 		t.Fatalf("SaveReview(global): %v", err)
 	}
 
-	tool := NewContextTool(s, References{}, "default")
+	tool := newTestContextTool(s, References{}, "default")
 	args, err := json.Marshal(map[string]any{"chapter": 2})
 	if err != nil {
 		t.Fatalf("Marshal: %v", err)
@@ -702,7 +941,7 @@ func TestContextToolKeepsFullForeshadowWhenRecallNotTriggered(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("SaveOutline: %v", err)
 	}
-	if err := s.Progress.Init("test", 4); err != nil {
+	if err := s.Progress.Init(4); err != nil {
 		t.Fatalf("InitProgress: %v", err)
 	}
 	if err := s.World.SaveForeshadowLedger([]domain.ForeshadowEntry{
@@ -712,7 +951,7 @@ func TestContextToolKeepsFullForeshadowWhenRecallNotTriggered(t *testing.T) {
 		t.Fatalf("SaveForeshadowLedger: %v", err)
 	}
 
-	tool := NewContextTool(s, References{}, "default")
+	tool := newTestContextTool(s, References{}, "default")
 	args, err := json.Marshal(map[string]any{"chapter": 2})
 	if err != nil {
 		t.Fatalf("Marshal: %v", err)
@@ -726,7 +965,8 @@ func TestContextToolKeepsFullForeshadowWhenRecallNotTriggered(t *testing.T) {
 	if err := json.Unmarshal(result, &payload); err != nil {
 		t.Fatalf("Unmarshal: %v", err)
 	}
-	if _, ok := payload["foreshadow_ledger"]; !ok {
+	episodic := payload["episodic_memory"].(map[string]any)
+	if _, ok := episodic["foreshadow_ledger"]; !ok {
 		t.Fatal("expected full foreshadow ledger to remain when selected recall is not triggered")
 	}
 	if _, ok := payload["selected_memory"]; ok {
@@ -746,7 +986,7 @@ func TestContextToolFallsBackToFullForeshadowWhenSelectionIsTooSparse(t *testing
 	}); err != nil {
 		t.Fatalf("SaveOutline: %v", err)
 	}
-	if err := s.Progress.Init("test", 8); err != nil {
+	if err := s.Progress.Init(8); err != nil {
 		t.Fatalf("InitProgress: %v", err)
 	}
 	if err := s.World.SaveForeshadowLedger([]domain.ForeshadowEntry{
@@ -760,7 +1000,7 @@ func TestContextToolFallsBackToFullForeshadowWhenSelectionIsTooSparse(t *testing
 		t.Fatalf("SaveForeshadowLedger: %v", err)
 	}
 
-	tool := NewContextTool(s, References{}, "default")
+	tool := newTestContextTool(s, References{}, "default")
 	args, err := json.Marshal(map[string]any{"chapter": 2})
 	if err != nil {
 		t.Fatalf("Marshal: %v", err)
@@ -774,7 +1014,8 @@ func TestContextToolFallsBackToFullForeshadowWhenSelectionIsTooSparse(t *testing
 	if err := json.Unmarshal(result, &payload); err != nil {
 		t.Fatalf("Unmarshal: %v", err)
 	}
-	if _, ok := payload["foreshadow_ledger"]; !ok {
+	episodic := payload["episodic_memory"].(map[string]any)
+	if _, ok := episodic["foreshadow_ledger"]; !ok {
 		t.Fatal("expected full foreshadow ledger when selection is too sparse")
 	}
 	if selected, ok := payload["selected_memory"].(map[string]any); ok {
@@ -799,7 +1040,7 @@ func TestContextToolInjectsRewriteBriefForPendingRewriteChapter(t *testing.T) {
 	if err := s.Init(); err != nil {
 		t.Fatalf("Init: %v", err)
 	}
-	if err := s.Progress.Init("test", 3); err != nil {
+	if err := s.Progress.Init(3); err != nil {
 		t.Fatalf("InitProgress: %v", err)
 	}
 	if err := s.Progress.MarkChapterComplete(2, 3000, "", ""); err != nil {
@@ -821,7 +1062,7 @@ func TestContextToolInjectsRewriteBriefForPendingRewriteChapter(t *testing.T) {
 		t.Fatalf("SaveReview: %v", err)
 	}
 
-	tool := NewContextTool(s, References{}, "default")
+	tool := newTestContextTool(s, References{}, "default")
 	args, err := json.Marshal(map[string]any{"chapter": 2})
 	if err != nil {
 		t.Fatalf("Marshal: %v", err)
@@ -835,9 +1076,10 @@ func TestContextToolInjectsRewriteBriefForPendingRewriteChapter(t *testing.T) {
 	if err := json.Unmarshal(result, &payload); err != nil {
 		t.Fatalf("Unmarshal: %v", err)
 	}
-	brief, ok := payload["rewrite_brief"].(map[string]any)
+	working := payload["working_memory"].(map[string]any)
+	brief, ok := working["rewrite_brief"].(map[string]any)
 	if !ok {
-		t.Fatalf("expected rewrite_brief in chapter context, got %T", payload["rewrite_brief"])
+		t.Fatalf("expected working_memory.rewrite_brief, got %T", working["rewrite_brief"])
 	}
 	if got := brief["reason"]; got != "节奏拖沓，需要压缩前半段" {
 		t.Fatalf("expected rewrite reason, got %v", got)
@@ -859,11 +1101,11 @@ func TestContextToolOmitsRewriteBriefForNormalChapter(t *testing.T) {
 	if err := s.Init(); err != nil {
 		t.Fatalf("Init: %v", err)
 	}
-	if err := s.Progress.Init("test", 3); err != nil {
+	if err := s.Progress.Init(3); err != nil {
 		t.Fatalf("InitProgress: %v", err)
 	}
 
-	tool := NewContextTool(s, References{}, "default")
+	tool := newTestContextTool(s, References{}, "default")
 	args, err := json.Marshal(map[string]any{"chapter": 2})
 	if err != nil {
 		t.Fatalf("Marshal: %v", err)
@@ -877,7 +1119,8 @@ func TestContextToolOmitsRewriteBriefForNormalChapter(t *testing.T) {
 	if err := json.Unmarshal(result, &payload); err != nil {
 		t.Fatalf("Unmarshal: %v", err)
 	}
-	if _, ok := payload["rewrite_brief"]; ok {
+	working := payload["working_memory"].(map[string]any)
+	if _, ok := working["rewrite_brief"]; ok {
 		t.Fatal("expected no rewrite_brief for chapter outside PendingRewrites")
 	}
 }
@@ -887,7 +1130,7 @@ func TestContextToolLoadsArcReviewAffectingEarlierChapter(t *testing.T) {
 	if err := s.Init(); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.Progress.Init("arc brief", 4); err != nil {
+	if err := s.Progress.Init(4); err != nil {
 		t.Fatal(err)
 	}
 	for chapter := 1; chapter <= 4; chapter++ {
@@ -908,7 +1151,7 @@ func TestContextToolLoadsArcReviewAffectingEarlierChapter(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	result, err := NewContextTool(s, References{}, "default").Execute(context.Background(), json.RawMessage(`{"chapter":3}`))
+	result, err := newTestContextTool(s, References{}, "default").Execute(context.Background(), json.RawMessage(`{"chapter":3}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -916,7 +1159,8 @@ func TestContextToolLoadsArcReviewAffectingEarlierChapter(t *testing.T) {
 	if err := json.Unmarshal(result, &payload); err != nil {
 		t.Fatal(err)
 	}
-	brief, _ := payload["rewrite_brief"].(map[string]any)
+	working := payload["working_memory"].(map[string]any)
+	brief, _ := working["rewrite_brief"].(map[string]any)
 	if brief == nil || !strings.Contains(fmt.Sprint(brief["review_summary"]), "第二弧") {
 		t.Fatalf("expected arc review handoff for chapter 3, got %#v", brief)
 	}
@@ -930,11 +1174,11 @@ func TestContextToolDoesNotInjectUserDirectives(t *testing.T) {
 	if err := s.Init(); err != nil {
 		t.Fatalf("Init: %v", err)
 	}
-	if err := s.Progress.Init("test", 3); err != nil {
+	if err := s.Progress.Init(3); err != nil {
 		t.Fatalf("InitProgress: %v", err)
 	}
 
-	tool := NewContextTool(s, References{}, "default")
+	tool := newTestContextTool(s, References{}, "default")
 	for name, chapter := range map[string]int{"writer": 1, "architect": 0} {
 		args, _ := json.Marshal(map[string]any{"chapter": chapter})
 		result, err := tool.Execute(context.Background(), args)
@@ -977,7 +1221,7 @@ func TestContextToolInjectsRuleViolations(t *testing.T) {
 		t.Fatalf("save violations: %v", err)
 	}
 
-	tool := NewContextTool(st, References{}, "default")
+	tool := newTestContextTool(st, References{}, "default")
 	args, _ := json.Marshal(map[string]any{"chapter": 2})
 	raw, err := tool.Execute(context.Background(), args)
 	if err != nil {

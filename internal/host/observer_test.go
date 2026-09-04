@@ -1,6 +1,8 @@
 package host
 
 import (
+	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 
@@ -37,7 +39,8 @@ func TestObserverSubagentRetryEventsUpdateSameLinePerAgent(t *testing.T) {
 				Agent:      "writer",
 				Attempt:    i,
 				MaxRetries: 7,
-				Message:    "stream failed",
+				Message:    "stream read error: INTERNAL_ERROR; received from peer [network, openai]",
+				Meta:       json.RawMessage(`{"retry_delay_ms":2000}`),
 			},
 		})
 	}
@@ -54,6 +57,58 @@ func TestObserverSubagentRetryEventsUpdateSameLinePerAgent(t *testing.T) {
 	}
 	if events[1].RetryAt.IsZero() || !strings.Contains(events[1].Detail, "重试 (2/7，2s后)") {
 		t.Fatalf("event = %+v, want RetryAt deadline + static delay in Detail", events[1])
+	}
+	if events[1].Kind != "network" {
+		t.Fatalf("event kind = %q, want network", events[1].Kind)
+	}
+}
+
+func TestRetryProgressDelayRequiresReportedDelay(t *testing.T) {
+	p := &agentcore.ProgressPayload{Attempt: 3, MaxRetries: 7}
+	if got := retryProgressDelay(p); got != 0 {
+		t.Fatalf("unreported delay = %s, want 0", got)
+	}
+	p.Meta = json.RawMessage(`{"retry_delay_ms":4500}`)
+	if got := retryProgressDelay(p); got.String() != "4.5s" {
+		t.Fatalf("reported delay = %s, want 4.5s", got)
+	}
+}
+
+func TestErrorKindFromFlattenedMessage(t *testing.T) {
+	tests := []struct {
+		message string
+		want    string
+	}{
+		{message: "tool argument validation failed: invalid JSON", want: "tool_validation"},
+		{message: "bad_response_status_code: Too many concurrent requests [provider, HTTP 500, openai]", want: "overloaded"},
+	}
+	for _, tt := range tests {
+		if got := errorKind(nil, tt.message); got != tt.want {
+			t.Fatalf("errorKind(%q) = %q, want %q", tt.message, got, tt.want)
+		}
+	}
+}
+
+func TestObserverDispatchErrorUpdatesSingleEventWithDetail(t *testing.T) {
+	var events []Event
+	o := testObserver(&events)
+
+	o.dispatchStart("architect_long", "规划长篇小说", "需要生成分层大纲")
+	runErr := errors.New("stream read error: INTERNAL_ERROR; received from peer [network, openai]")
+	o.dispatchFinish("architect_long", runErr)
+
+	if len(events) != 2 {
+		t.Fatalf("start + failed update 应只有 2 个原始事件，got %d: %+v", len(events), events)
+	}
+	start, failed := events[0], events[1]
+	if !strings.Contains(start.Detail, "需要生成分层大纲") || !strings.Contains(start.Detail, "规划长篇小说") {
+		t.Fatalf("DISPATCH 开始日志应保留完整原因与任务: %+v", start)
+	}
+	if failed.ID != start.ID || failed.Category != "DISPATCH" || !failed.Failed || failed.Level != "error" {
+		t.Fatalf("失败应原地更新 DISPATCH: start=%+v failed=%+v", start, failed)
+	}
+	if failed.Detail != runErr.Error() || failed.Kind != "network" || !strings.Contains(failed.Summary, "INTERNAL_ERROR") {
+		t.Fatalf("DISPATCH 应携带完整错误和分类: %+v", failed)
 	}
 }
 
@@ -100,5 +155,45 @@ func TestObserverSubagentToolDeltaUpdatesSaveFoundationTypeAcrossChunks(t *testi
 	}
 	if !strings.Contains(strings.Join(summaries, "\n"), "save_foundation[premise]") {
 		t.Fatalf("summaries = %v, want save_foundation[premise]", summaries)
+	}
+}
+
+func TestObserverToolErrorUpdatesSingleToolEventWithFullDetail(t *testing.T) {
+	var events []Event
+	o := testObserver(&events)
+	fullError := "tool argument validation failed: unexpected end of JSON input\nraw args: " +
+		`{"chapter":1,"summary":"` + strings.Repeat("秦越在材料中发现线索", 30) + "<TAIL>"
+
+	o.handleToolUpdate(agentcore.Event{
+		Type: agentcore.EventToolExecUpdate,
+		Progress: &agentcore.ProgressPayload{
+			Kind:  agentcore.ProgressToolStart,
+			Agent: "writer",
+			Tool:  "edit_chapter",
+		},
+	})
+	o.handleToolUpdate(agentcore.Event{
+		Type: agentcore.EventToolExecUpdate,
+		Progress: &agentcore.ProgressPayload{
+			Kind:    agentcore.ProgressToolError,
+			Agent:   "writer",
+			Tool:    "edit_chapter",
+			Message: fullError,
+		},
+	})
+
+	if len(events) != 2 {
+		t.Fatalf("start + failed update 应只有 2 个原始事件，got %d: %+v", len(events), events)
+	}
+	start, failed := events[0], events[1]
+	if failed.ID == "" || failed.ID != start.ID || !failed.Failed || failed.Category != "TOOL" || failed.Level != "error" {
+		t.Fatalf("失败事件应原地更新 TOOL 行: start=%+v failed=%+v", start, failed)
+	}
+	if !strings.Contains(failed.Summary, "tool argument validation failed") ||
+		!strings.Contains(failed.Detail, fullError) || !strings.Contains(failed.Detail, "<TAIL>") {
+		t.Fatalf("失败事件应同时保留 UI 摘要和完整日志详情: %+v", failed)
+	}
+	if len(failed.Summary) >= len(failed.Detail) {
+		t.Fatalf("UI Summary 应短于完整 Detail: summary=%d detail=%d", len(failed.Summary), len(failed.Detail))
 	}
 }

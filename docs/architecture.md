@@ -41,6 +41,8 @@
 
 UI、诊断、事件日志都是从事件流 / 只读工件投影出来的被动消费者。读事实，不产生事实，不影响控制流。
 
+观测数据严格分三层：`agentcore.ProgressPayload` 是传输层，错误文本必须完整且不得包含 UI 截断策略；`host.Event.Summary` 是短展示语义，`Detail` 是完整诊断；文件日志优先写完整 `Detail`，TUI 只读 `Summary` 并在最终渲染时按终端宽度截断。文件 logger 由 `Host` 持有：先取得小说目录租约，再建立日志会话，随后才装配 Store、模型和 Engine；这样既不会绕过单书独占，也能覆盖全部装配和关闭日志。所谓“完整日志”指错误链、原始非法参数和生命周期元数据不丢失，不是把成功生成的小说正文重复转录到 `tui.log`；大内容仍由 Store 工件和 `meta/sessions` 承载。
+
 **`internal/diag` 是引擎唯一的可观测性子系统**——一等支撑设施，但不是产品核心。它跨读几乎所有工件 + session + log + checkpoint，承担两职：① **创作质量诊断**（规则 → Finding，`/diag` 屏上报告）；② **运行时排错 + 脱敏导出**（行为骨架剥正文 + 循环聚合 → 覆盖式 `meta/diag-export.md`）。
 
 **观察者纪律（不可松动）**：diag 可以诊断、可以建议，但**永不自己动手**——不自动修复、不续跑、不改流程（历史教训见 §10 第 5 条）。
@@ -104,11 +106,21 @@ UI、诊断、事件日志都是从事件流 / 只读工件投影出来的被动
 
 ## 4. 数据模型
 
-### 4.1 Progress（`internal/domain/runtime.go`）
+### 4.1 BookMetadata 与 Progress
+
+`BookMetadata` 是书名和面向读者简介的唯一事实源，持久化到 `meta/book.json`；`book.md` 只是可读投影。Premise 不重复保存书名，Progress 也不承载作品信息。
+
+```go
+type BookMetadata struct {
+    Title    string
+    Synopsis string
+}
+```
+
+Progress（`internal/domain/runtime.go`）只记录运行状态：
 
 ```go
 type Progress struct {
-    NovelName         string
     Phase             Phase           // init / premise / outline / writing / complete
     CurrentChapter    int
     TotalChapters     int
@@ -151,7 +163,8 @@ Artifact 在 `store/outline.go` `drafts.go` `summaries.go` `characters.go` `worl
 
 - **Signals**：`PendingCommit`（commit 中断恢复）。启动/恢复时读，运行时不读。
 - **Decisions**（`meta/decisions.jsonl`）：每次 Arbiter 裁定的审计记录（facts+input+decision），可离线重放；**不是恢复数据源**（恢复只依赖 Progress/Checkpoint/RunMeta）。
-- **大纲反馈池**（`meta/outline_feedback.jsonl`）：writer 的 commit feedback 落盘（仅分层书），architect 下次结构操作经 novel_context 参考后清空。
+- **增长型世界事实**：时间线与角色状态变化分别以 `timeline.jsonl`、`meta/state_changes.jsonl` 追加；进程内维护去重索引，正常提交只写本章增量。旧版 JSON 数组在下一次追加时按“先原子写新日志、后删除旧文件”的幂等协议迁移，`timeline.md` 是可重建的人类可读投影。
+- **大纲反馈池**（`meta/outline_feedback.jsonl`）：writer 的普通反馈在下一次结构操作中消费；外部正文修订若影响剧情，则在继续写作前优先交给 architect，处理后清空。
 - **机械违规记录**（`meta/rule_violations.jsonl`）：commit 时按 user_rules 检查的结果，editor 评审经 `novel_context(chapter=N)` 消费；best-effort 质量元数据，非与提交同级强一致。
 
 ### 4.4 分层大纲与完本收敛（收官卷）
@@ -173,7 +186,7 @@ Artifact 在 `store/outline.go` `drafts.go` `summaries.go` `characters.go` `worl
 
 ### 5.1 读类工具
 
-`novel_context(scope)` / `read_chapter(n)` —— 任何时候可调用，不依赖前置状态，返回数据足够 LLM 独立决策。`novel_context(chapter=N)` 额外注入该章机械违规（如有）；architect 路径注入已完成卷/当前卷弧摘要、角色快照、大纲反馈池与 foundation 状态。扩弧时，已发生内容是事实，骨架只是计划；Architect 可在 `expand_arc` 中同步修订目标弧的 title/goal 并展开章节。
+`novel_context(scope)` / `read_chapter(n)` —— 任何时候可调用，不依赖前置状态，返回数据足够 LLM 独立决策。`novel_context(chapter=N)` 额外注入该章机械违规（如有）；architect 路径注入已完成卷/当前卷弧摘要、角色快照、大纲反馈池与 foundation 状态。长篇规划概览只携带当前弧章节，其余卷弧保留结构骨架；用 `novel_context(volume=V, arc=A)` 精确读取时，已展开弧返回章节详情，未展开弧返回骨架目标。扩弧时，已发生内容是事实，骨架只是计划；Architect 可在 `expand_arc` 中同步修订目标弧的 title/goal 并展开章节。
 
 ### 5.2 写类工具（单文件原子 + 分级恢复语义）
 
@@ -181,6 +194,7 @@ Artifact 在 `store/outline.go` `drafts.go` `summaries.go` `characters.go` `worl
 
 | 工具 | Artifact | Step |
 |---|---|---|
+| `save_book` | meta/book.json + book.md | book |
 | `plan_chapter` | drafts/chXX.plan.json | plan |
 | `draft_chapter` | drafts/chXX.draft.md | draft |
 | `edit_chapter` | drafts/chXX.draft.md | edit |
@@ -193,7 +207,7 @@ Artifact 在 `store/outline.go` `drafts.go` `summaries.go` `characters.go` `worl
 
 `commit_chapter` 承担弧/卷/全书完成检测，返回结构化事实；`save_review` 不做文学阈值裁定，只校验审阅事实并把 Editor 给出的 verdict 原子映射为 Flow 与返工队列。
 
-`edit_chapter` 是 `agentcore.EditTool` 的薄封装，归属检查保证已完成章节必须在 `PendingRewrites` 中才能编辑。
+`edit_chapter` 是 `agentcore.EditTool` 的薄封装，仅允许编辑已完成且位于 `PendingRewrites` 的章节；新章初稿需通过 `draft_chapter(mode="write")` 整章覆盖。
 
 ### 5.3 错误分层
 
@@ -254,7 +268,7 @@ Worker 之间不直接通信，所有信息流经 Store 中的结构化工件：
 | `StopAfterTools` / `StopAfterToolResult` | `agents/build.go` SubAgentConfig | 关键工具成功即退出 Worker run（终态退出仍咨询 StopGuard，见契约测试）。Writer `commit_chapter` 命中即停；Editor 的 `save_review`/`save_arc_summary`/`save_volume_summary`、Architect 弧/卷收尾走 `StopAfterToolResult` |
 | `CheckpointDeltaGuard` | `agents/guard/subagent_guards.go` | 以 baseline checkpoint 为分界，本轮结束前必须看到对应 step 的新 checkpoint，否则拒绝 `end_turn`；连续拦 3 次升级 terminate（弱模型死循环兜底）。Editor 的 guard 任务感知：被派生成摘要时仅复核不算完成 |
 | 工具内联 `next_step` | 各工具返回值字段 | 每个事实自带"下一步建议"，LLM 看到事实就知道下一步 |
-| 工具内归属/前置检查 | `edit_chapter` `commit_chapter` 等 | 数据层物理拦截：改未入队的已完成章被拒、空提交被拒、`ConcurrencySafe=false` 阻止并发竞态 |
+| 工具内归属/前置检查 | `edit_chapter` `commit_chapter` 等 | 数据层物理拦截：初稿定点编辑、改未入队的已完成章、空提交均被拒，`ConcurrencySafe=false` 阻止并发竞态 |
 
 writer.md 只承担：执行协议、断点续跑认知模型、章节契约解读；写作标准在文风层（`{{VOICE}}` 占位回填，用户可覆盖，见 `docs/voice-layer.md`）。**这正是文风层敢开放给用户的前提：不变量住在工具层，prompt 随便改坏不了状态机。**
 
@@ -264,7 +278,7 @@ writer.md 只承担：执行协议、断点续跑认知模型、章节契约解�
 
 **修改边界**：可进 agentcore——新 ContextManager 策略、新 provider 适配、新事件类型；不进 agentcore——业务模型与业务工具。判断准则：假设 agentcore 未来会被 coding agent / 客服 agent 引入，新能力在那个场景仍有意义才允许进。**禁止在应用层写兜底补丁**——缺能力直接改上游。
 
-**契约测试**（`internal/agents/agentcore_contract_test.go`，5 条，全部经 `Runner.Run` 驱动）：把本项目依赖的框架行为钉成可执行断言（终态退出咨询 StopGuard、Error/Aborted 不触达 guard、Escalate 错误链可 `errors.Is` 匹配、`Run` 的类型化 `ErrUnknownAgent` 等）。**bump agentcore 前必须全绿**——注释会过时，测试不会（这条纪律已经抓到过一次失效假设并省下一个 workaround）。
+**契约测试**（`internal/agents/agentcore_contract_test.go`，6 条，全部经 `Runner.Run` 驱动）：把本项目依赖的框架行为钉成可执行断言（终态退出咨询 StopGuard、Error/Aborted 不触达 guard、Escalate 错误链可 `errors.Is` 匹配、`Run` 的类型化 `ErrUnknownAgent`、工具错误进度完整且为纯文本）。**bump agentcore 前必须全绿**——注释会过时，测试不会（这条纪律已经抓到过一次失效假设并省下一个 workaround）。
 
 ### 6.5 提示词缓存
 
@@ -371,7 +385,7 @@ User: "一句话需求"
 | 意图 | 来源 | 语义 |
 |---|---|---|
 | `AdvanceMode=review` + 精确 permit | `/review on`、`/next` | 持久政策：每个正向新章必须单独放行 |
-| `AdvanceHold` | Arbiter intervention | 一次性意图：当前边界或返工排空后暂停 |
+| `AdvanceHold` | Arbiter intervention | 一次性意图：当前边界、返工排空或目标章节稳定提交后暂停 |
 
 许可绑定章节号。只有目标章进入 CompletedChapters、PendingCommit 清空且 commit checkpoint 存在才消费，因此提交 saga 任一窗口崩溃都不会把同一许可用于下一章。详细不变量见 [Chapter Advance Gate](chapter-advance-gate.md)。
 
@@ -483,7 +497,7 @@ assets/
 
 改文风 → 改 `<书目录>/style/`（用户级）或 assets/voice.md（内置），文风评测集 A/B 验证；新增评审维度 → 改 editor.md（save_review 结构化接收）；新增参考资料 → 三处显式接线（`tools.References` + `loadReferences` + novel_context 注入映射）。
 
-**全书级风格统计（`internal/stylestat`）**：对全部已完成章节跑确定性统计（句式模式/高频短语/跨章重复句/章末形态），注入 `episodic_memory.style_stats`：editor 按数字裁定，writer 据此自避免。**统计归代码，裁定归 LLM**。
+**全书级风格统计（`internal/stylestat`）**：Host 为每本书创建唯一 `StyleStatsIndex`，并显式注入 `novel_context` 与 `commit_chapter`。首次启动从全部已完成章节恢复索引，后续对新增/重写章节增量更新（句式模式/高频短语/跨章重复句/章末形态），相同书状态下复用快照并注入 `episodic_memory.style_stats`：editor 按数字裁定，writer 据此自避免。离线 eval 仍可直接调用纯函数 `Compute`。**统计归代码，裁定归 LLM**。
 
 ---
 

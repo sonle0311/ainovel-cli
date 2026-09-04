@@ -49,11 +49,11 @@ func TestContextToolInjectsCompactSimulationProfile(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.Progress.Init("test", 1); err != nil {
+	if err := st.Progress.Init(1); err != nil {
 		t.Fatal(err)
 	}
 
-	tool := NewContextTool(st, References{}, "default")
+	tool := newTestContextTool(st, References{}, "default")
 	architectRaw, err := tool.Execute(context.Background(), json.RawMessage(`{}`))
 	if err != nil {
 		t.Fatalf("architect Execute: %v", err)
@@ -77,8 +77,8 @@ func TestContextToolInjectsCompactSimulationProfile(t *testing.T) {
 
 func assertCompactSimulationProfile(t *testing.T, payload map[string]any, section string) {
 	t.Helper()
-	if got := payload["simulation_profile"]; got != true {
-		t.Fatalf("expected top-level simulation_profile marker, got %#v", got)
+	if _, ok := payload["simulation_profile"]; ok {
+		t.Fatal("unexpected top-level simulation_profile")
 	}
 	sectionMap, ok := payload[section].(map[string]any)
 	if !ok {

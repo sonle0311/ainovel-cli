@@ -7,6 +7,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/voocel/ainovel-cli/internal/domain"
+	"github.com/voocel/ainovel-cli/internal/entry/startup"
 	"github.com/voocel/ainovel-cli/internal/host"
 	"github.com/voocel/ainovel-cli/internal/i18n"
 )
@@ -190,6 +191,28 @@ func commandRegistryInstance() commandRegistry {
 			},
 		},
 		{
+			Name:        "start",
+			Group:       "writing",
+			Usage:       "/start <path>",
+			Description: "从设定或大纲文件创建新书",
+			Run: func(m Model, args []string) (tea.Model, tea.Cmd) {
+				if m.mode != modeNew {
+					m.applyEvent(host.Event{
+						Time: time.Now(), Category: "ERROR", Summary: "/start 仅可在欢迎页创建新书", Level: "error",
+					})
+					m.refreshEventViewport()
+					return m, nil
+				}
+				prompt, err := prepareFileStart(args)
+				if err != nil {
+					m.err = err
+					return m, nil
+				}
+				cmd := m.enterStarting(prompt)
+				return m, tea.Batch(startRuntime(m.runtime, prompt), cmd)
+			},
+		},
+		{
 			Name:        "import",
 			Group:       "writing",
 			Usage:       i18n.T("cmd.usage.import"),
@@ -299,6 +322,29 @@ func commandRegistryInstance() commandRegistry {
 			},
 		},
 		{
+			Name:        "sync",
+			Group:       "writing",
+			Usage:       "/sync [--check]",
+			Description: i18n.T("cmd.sync.desc"),
+			AutoExecute: true,
+			NeedsIdle:   true,
+			Run: func(m Model, args []string) (tea.Model, tea.Cmd) {
+				cmd, checkOnly, err := startRevisionSync(m.runtime, args)
+				if err != nil {
+					m.applyEvent(host.Event{Time: time.Now(), Category: "ERROR", Summary: fmt.Sprintf(i18n.T("cmd.sync.err_start"), err), Level: "error"})
+					m.refreshEventViewport()
+					return m, nil
+				}
+				summary := i18n.T("cmd.sync.analyzing")
+				if checkOnly {
+					summary = i18n.T("cmd.sync.checking")
+				}
+				m.applyEvent(host.Event{Time: time.Now(), Category: "SYSTEM", Summary: summary, Level: "info"})
+				m.refreshEventViewport()
+				return m, cmd
+			},
+		},
+		{
 			Name:        "export",
 			Group:       "writing",
 			Usage:       "/export [path] [from=N] [to=M] [--overwrite]",
@@ -325,6 +371,22 @@ func commandRegistryInstance() commandRegistry {
 
 func commandSpecs() []slashCommandSpec {
 	return commandRegistryInstance().Visible()
+}
+
+func prepareFileStart(args []string) (string, error) {
+	path := strings.TrimSpace(strings.Join(args, " "))
+	if len(path) >= 2 && ((path[0] == '"' && path[len(path)-1] == '"') ||
+		(path[0] == '\'' && path[len(path)-1] == '\'')) {
+		path = path[1 : len(path)-1]
+	}
+	if path == "" {
+		return "", fmt.Errorf("用法：/start <设定或大纲文件路径>")
+	}
+	prompt, err := startup.LoadPromptFile(path)
+	if err != nil {
+		return "", err
+	}
+	return startup.PrepareQuick(prompt)
 }
 
 func (m Model) handleSlashCommand(cmd slashCommand) (tea.Model, tea.Cmd) {

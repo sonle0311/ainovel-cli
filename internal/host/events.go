@@ -2,8 +2,6 @@ package host
 
 import (
 	"time"
-
-	"github.com/voocel/ainovel-cli/internal/domain"
 )
 
 // Event 是 TUI 消费的结构化事件。
@@ -33,13 +31,25 @@ type Event struct {
 // Running 返回事件是否处于进行中。
 // 仅调用类事件（有 ID 的 TOOL / DISPATCH / DECISION）可能进行中；其它类型总是返回 false。
 func (e Event) Running() bool {
-	return e.ID != "" && e.FinishedAt.IsZero()
+	return e.hasLifecycle() && e.FinishedAt.IsZero()
+}
+
+func (e Event) hasLifecycle() bool {
+	if e.ID == "" {
+		return false
+	}
+	switch e.Category {
+	case "TOOL", "DISPATCH", "DECISION":
+		return true
+	default:
+		return false
+	}
 }
 
 // UISnapshot 是 TUI 渲染所需的聚合状态快照。
 type UISnapshot struct {
 	Provider             string
-	NovelName            string
+	BookTitle            string
 	ModelName            string
 	ModelContextWindow   int // 当前默认模型的上下文窗口（随 /model 切换实时解析）
 	ThinkingLevel        string
@@ -63,17 +73,6 @@ type UISnapshot struct {
 	RecoveryLabel        string
 	IsRunning            bool
 	Agents               []AgentSnapshot
-
-	// 上下文
-	ContextTokens         int
-	ContextWindow         int
-	ContextPercent        float64
-	ContextScope          string
-	ContextStrategy       string
-	ContextActiveMessages int
-	ContextSummaryCount   int
-	ContextCompactedCount int
-	ContextKeptCount      int
 
 	// 累计用量（整个会话，跨所有 agent 与模型切换）
 	TotalInputTokens      int
@@ -102,6 +101,7 @@ type UISnapshot struct {
 	CachePerModel []AgentCacheStat
 
 	// 基础设定
+	Synopsis         string
 	Premise          string
 	Outline          []OutlineSnapshot
 	Characters       []string
@@ -192,14 +192,4 @@ type CoCreateReply struct {
 	Ready       bool
 	Suggestions []string
 	Raw         string
-}
-
-// ReplayDeltaText 从运行时队列项中提取可回放的流式文本。
-func ReplayDeltaText(item domain.RuntimeQueueItem) string {
-	if payload, ok := item.Payload.(map[string]any); ok {
-		if text, ok := payload["delta"].(string); ok {
-			return text
-		}
-	}
-	return ""
 }

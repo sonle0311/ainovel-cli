@@ -52,7 +52,7 @@ var catalogEN = map[string]string{
 	"welcome.example_1":             "Write a 12-chapter urban mystery starring a female forensic examiner",
 	"welcome.example_2":             "Create a xianxia epic: a mortal cultivates all the way to ascension",
 	"welcome.example_3":             "Write a sci-fi short story on the ethics of an awakened AI",
-	"welcome.import_hint":           "Have an existing draft? Type /import <file path> to continue it",
+	"welcome.import_hint":           "Have premise/outline? /start <path> to create new book · Have existing drafts? /import <path> to import and continue",
 	"welcome.tab_hint":              "Tab switch mode · Quick Start: Enter to create · Co-Create: Enter to chat",
 
 	// cocreate.go — startup modes
@@ -346,7 +346,7 @@ var catalogEN = map[string]string{
 	"cocreate.ph_stage_canstart":   "Add more, or press Ctrl+S to apply the direction and continue",
 	"cocreate.ph_canstart":         "Add more, or press Ctrl+S to start writing",
 	"cocreate.ph_default":          "Add more about your request, Enter to send to AI",
-	"cocreate.suggestions_hint":    "AI suggestions (press a number to fill the input):",
+	"cocreate.suggestions_hint":    "AI suggestions (press 1/2/3 to combine, edit then send):",
 	"cocreate.title":               "Co-create plan",
 	"cocreate.subtitle":            "Clarify the requirements first, then start writing",
 	"cocreate.title_stage":         "Stage co-create",
@@ -589,4 +589,25 @@ var catalogEN = map[string]string{
 	"imp.err.read_progress":             "Failed to read progress: %w",
 	"imp.err.non_empty_book":            "Already has %d completed chapters; refusing to merge an external novel into a non-empty book",
 	"imp.err.read_guidance":             "Failed to read segmentation guidance: %w",
+
+	// sync & revision — chapter revision and sync
+	"cmd.sync.desc":                       "Check or accept manually edited completed chapters",
+	"cmd.sync.err_start":                  "Failed to start chapter sync: %v",
+	"cmd.sync.analyzing":                  "Analyzing and accepting chapter revisions...",
+	"cmd.sync.checking":                   "Checking for external chapter changes...",
+	"cmd.sync.err_unknown_arg":            "Unknown argument %q (supported: --check)",
+	"revision.msg_no_changes":             "No external chapter changes detected",
+	"revision.chapter_summary":            "Chapter %d: %s",
+	"revision.story_changed":              " (story facts updated)",
+	"revision.downstream_issues":          " (found %d downstream conflicts)",
+	"revision.applied_summary":            "Accepted chapter revisions: %v",
+	"revision.err_sync_failed":            "Chapter sync failed: %v",
+	"revision.msg_changes_detected":       "Detected external modifications to chapter text: %v; run /sync to accept",
+	"engine.pause.stuck_rewrite_dropped":  "; Chapter %d removed from rework queue (keeping previous draft), continuing from subsequent chapters",
+	"host.err.output_book_missing":        "Output directory already has chapters, but book metadata does not exist",
+	"host.event.reopen_steer_dir":         "Continuation direction: %s",
+	"host.action.sync_revision":           "sync chapter revisions",
+	"host.err.read_revision_pending":      "read revision pending records: %w",
+	"host.err.check_external_revision":    "check external chapter revisions: %w",
+	"host.err.external_revision_detected": "Detected external changes in chapter text: %v; please run /sync first",
 }

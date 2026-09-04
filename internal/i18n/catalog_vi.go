@@ -52,7 +52,7 @@ var catalogVI = map[string]string{
 	"welcome.example_1":             "Viết truyện trinh thám đô thị 12 chương, nhân vật chính là nữ pháp y",
 	"welcome.example_2":             "Sáng tác trường thiên tiên hiệp: từ phàm nhân tu luyện đến phi thăng",
 	"welcome.example_3":             "Viết truyện ngắn khoa học viễn tưởng về đạo đức của AI thức tỉnh",
-	"welcome.import_hint":           "Đã có bản thảo? Gõ /import <đường dẫn file> để nhập và viết tiếp",
+	"welcome.import_hint":           "Đã có thiết lập/đại cương? /start <đường dẫn> tạo sách mới · Đã có bản thảo? /import <đường dẫn> nhập viết tiếp",
 	"welcome.tab_hint":              "Tab đổi chế độ · Bắt đầu nhanh: Enter để viết · Đồng sáng tạo: Enter để trò chuyện",
 
 	// cocreate.go — chế độ khởi động
@@ -346,7 +346,7 @@ var catalogVI = map[string]string{
 	"cocreate.ph_stage_canstart":   "Bổ sung thêm, hoặc nhấn Ctrl+S để áp dụng hướng và tiếp tục",
 	"cocreate.ph_canstart":         "Bổ sung thêm, hoặc nhấn Ctrl+S để bắt đầu sáng tác",
 	"cocreate.ph_default":          "Bổ sung thêm yêu cầu, Enter để gửi cho AI",
-	"cocreate.suggestions_hint":    "Gợi ý AI (nhấn phím số để điền vào ô nhập):",
+	"cocreate.suggestions_hint":    "Gợi ý AI (nhấn 1/2/3 để kết hợp, có thể chỉnh sửa rồi gửi):",
 	"cocreate.title":               "Cộng tác lập kế hoạch",
 	"cocreate.subtitle":            "Làm rõ yêu cầu trước, rồi bắt đầu sáng tác",
 	"cocreate.title_stage":         "Cộng tác giai đoạn",
@@ -589,4 +589,25 @@ var catalogVI = map[string]string{
 	"imp.err.read_progress":             "Đọc tiến độ thất bại: %w",
 	"imp.err.non_empty_book":            "Đã có %d chương hoàn thành; từ chối gộp tiểu thuyết ngoài vào sách không trống",
 	"imp.err.read_guidance":             "Đọc hướng dẫn chia chương thất bại: %w",
+
+	// sync & revision — đồng bộ và sửa đổi chương
+	"cmd.sync.desc":                       "Kiểm tra hoặc tiếp nhận các chương đã hoàn thành bị sửa thủ công",
+	"cmd.sync.err_start":                  "Khởi động đồng bộ chương thất bại: %v",
+	"cmd.sync.analyzing":                  "Đang phân tích và tiếp nhận sửa đổi chương...",
+	"cmd.sync.checking":                   "Đang kiểm tra sửa đổi chương từ bên ngoài...",
+	"cmd.sync.err_unknown_arg":            "Tham số không xác định %q (hỗ trợ: --check)",
+	"revision.msg_no_changes":             "Không phát hiện sửa đổi chương từ bên ngoài",
+	"revision.chapter_summary":            "Chương %d: %s",
+	"revision.story_changed":              " (sự kiện cốt truyện đã được cập nhật)",
+	"revision.downstream_issues":          " (phát hiện %d xung đột phía sau)",
+	"revision.applied_summary":            "Đã tiếp nhận sửa đổi chương: %v",
+	"revision.err_sync_failed":            "Đồng bộ chương thất bại: %v",
+	"revision.msg_changes_detected":       "Phát hiện nội dung chương đã bị sửa đổi từ bên ngoài: %v; chạy /sync để đồng bộ",
+	"engine.pause.stuck_rewrite_dropped":  "; Chương %d đã được đưa ra khỏi hàng đợi làm lại (giữ bản thảo trước đó), tiếp tục sáng tác từ các chương sau",
+	"host.err.output_book_missing":        "Thư mục output đã có chương, nhưng thông tin tác phẩm không tồn tại",
+	"host.event.reopen_steer_dir":         "Hướng viết tiếp: %s",
+	"host.action.sync_revision":           "đồng bộ sửa đổi chương",
+	"host.err.read_revision_pending":      "đọc bản ghi phục hồi sửa đổi: %w",
+	"host.err.check_external_revision":    "kiểm tra sửa đổi chương bên ngoài: %w",
+	"host.err.external_revision_detected": "Phát hiện nội dung chương đã bị sửa đổi từ bên ngoài: %v; vui lòng chạy /sync trước",
 }
